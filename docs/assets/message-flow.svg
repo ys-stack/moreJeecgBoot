@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1050" height="420" viewBox="0 0 1050 420"><defs>
+  <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+  <style>
+    .bg{fill:#f8fafc}.title{font:700 24px 'Microsoft YaHei',Arial,sans-serif;fill:#0f172a}.box{fill:#ffffff;stroke:#2563eb;stroke-width:1.6;rx:10}.box2{fill:#ecfeff;stroke:#0891b2;stroke-width:1.6;rx:10}.box3{fill:#fef3c7;stroke:#d97706;stroke-width:1.6;rx:10}.box4{fill:#f1f5f9;stroke:#64748b;stroke-width:1.6;rx:10}.txt{font:14px 'Microsoft YaHei',Arial,sans-serif;fill:#0f172a}.small{font:12px 'Microsoft YaHei',Arial,sans-serif;fill:#475569}.line{stroke:#334155;stroke-width:1.5;fill:none;marker-end:url(#arrow)}.dash{stroke:#64748b;stroke-width:1.4;fill:none;stroke-dasharray:5 4;marker-end:url(#arrow)}
+  </style>
+</defs>
+<rect class="bg" width="1050" height="420"/><text class="title" x="40" y="48">统一消息中心</text>
+<rect class="box" x="70" y="165" width="140" height="58"/><text class="txt" x="103" y="199">业务事件</text>
+<rect class="box" x="270" y="165" width="150" height="58"/><text class="txt" x="312" y="199">消息模板</text>
+<rect class="box2" x="480" y="165" width="160" height="58"/><text class="txt" x="520" y="199">消息服务</text>
+<line class="line" x1="210" y1="194" x2="270" y2="194"/><line class="line" x1="420" y1="194" x2="480" y2="194"/>
+<rect class="box4" x="730" y="70" width="130" height="48"/><text class="small" x="770" y="100">站内信</text>
+<rect class="box4" x="730" y="135" width="130" height="48"/><text class="small" x="762" y="165">WebSocket</text>
+<rect class="box4" x="730" y="200" width="130" height="48"/><text class="small" x="775" y="230">邮件</text>
+<rect class="box4" x="730" y="265" width="130" height="48"/><text class="small" x="775" y="295">短信</text>
+<rect class="box4" x="730" y="330" width="180" height="48"/><text class="small" x="760" y="360">钉钉 / 企业微信</text>
+<line class="line" x1="640" y1="185" x2="730" y2="94"/><line class="line" x1="640" y1="190" x2="730" y2="159"/><line class="line" x1="640" y1="194" x2="730" y2="224"/><line class="line" x1="640" y1="200" x2="730" y2="289"/><line class="line" x1="640" y1="205" x2="730" y2="354"/>
+</svg>

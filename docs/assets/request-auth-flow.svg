@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1160" height="430" viewBox="0 0 1160 430"><defs>
+  <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+  <style>
+    .bg{fill:#f8fafc}.title{font:700 24px 'Microsoft YaHei',Arial,sans-serif;fill:#0f172a}.box{fill:#ffffff;stroke:#2563eb;stroke-width:1.6;rx:10}.box2{fill:#ecfeff;stroke:#0891b2;stroke-width:1.6;rx:10}.box3{fill:#fef3c7;stroke:#d97706;stroke-width:1.6;rx:10}.box4{fill:#f1f5f9;stroke:#64748b;stroke-width:1.6;rx:10}.txt{font:14px 'Microsoft YaHei',Arial,sans-serif;fill:#0f172a}.small{font:12px 'Microsoft YaHei',Arial,sans-serif;fill:#475569}.line{stroke:#334155;stroke-width:1.5;fill:none;marker-end:url(#arrow)}.dash{stroke:#64748b;stroke-width:1.4;fill:none;stroke-dasharray:5 4;marker-end:url(#arrow)}
+  </style>
+</defs>
+<rect class="bg" width="1160" height="430"/><text class="title" x="40" y="48">核心请求链路</text>
+<rect class="box" x="45" y="150" width="130" height="58"/><text class="txt" x="82" y="184">前端</text>
+<rect class="box" x="210" y="150" width="130" height="58"/><text class="txt" x="248" y="184">JwtFilter</text>
+<rect class="box" x="375" y="150" width="130" height="58"/><text class="txt" x="406" y="184">ShiroRealm</text>
+<rect class="box" x="540" y="150" width="130" height="58"/><text class="txt" x="578" y="184">Controller</text>
+<rect class="box" x="705" y="150" width="130" height="58"/><text class="txt" x="735" y="184">权限 AOP</text>
+<rect class="box" x="870" y="150" width="150" height="58"/><text class="txt" x="898" y="184">QueryGenerator</text>
+<rect class="box4" x="1045" y="150" width="90" height="58"/><text class="txt" x="1070" y="184">DB</text>
+<line class="line" x1="175" y1="179" x2="210" y2="179"/><line class="line" x1="340" y1="179" x2="375" y2="179"/><line class="line" x1="505" y1="179" x2="540" y2="179"/><line class="line" x1="670" y1="179" x2="705" y2="179"/><line class="line" x1="835" y1="179" x2="870" y2="179"/><line class="line" x1="1020" y1="179" x2="1045" y2="179"/>
+<rect class="box4" x="360" y="300" width="140" height="52"/><text class="txt" x="398" y="331">Redis</text>
+<line class="dash" x1="440" y1="208" x2="430" y2="300"/>
+<text class="small" x="208" y="128">携带 X-Access-Token</text><text class="small" x="360" y="128">校验 token / 续期</text><text class="small" x="700" y="128">加载数据权限规则</text><text class="small" x="875" y="128">合并动态查询条件</text>
+</svg>

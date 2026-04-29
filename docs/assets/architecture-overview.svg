@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="760" viewBox="0 0 1180 760"><defs>
+  <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+  <style>
+    .bg{fill:#f8fafc}.title{font:700 24px 'Microsoft YaHei',Arial,sans-serif;fill:#0f172a}.box{fill:#ffffff;stroke:#2563eb;stroke-width:1.6;rx:10}.box2{fill:#ecfeff;stroke:#0891b2;stroke-width:1.6;rx:10}.box3{fill:#fef3c7;stroke:#d97706;stroke-width:1.6;rx:10}.box4{fill:#f1f5f9;stroke:#64748b;stroke-width:1.6;rx:10}.txt{font:14px 'Microsoft YaHei',Arial,sans-serif;fill:#0f172a}.small{font:12px 'Microsoft YaHei',Arial,sans-serif;fill:#475569}.line{stroke:#334155;stroke-width:1.5;fill:none;marker-end:url(#arrow)}.dash{stroke:#64748b;stroke-width:1.4;fill:none;stroke-dasharray:5 4;marker-end:url(#arrow)}
+  </style>
+</defs>
+<rect class="bg" width="1180" height="760"/><text class="title" x="40" y="48">总体架构图</text>
+<rect class="box" x="455" y="80" width="270" height="56"/><text class="txt" x="505" y="114">Vue3 前端 / 管理端</text>
+<rect class="box3" x="470" y="180" width="240" height="60"/><text class="txt" x="545" y="205">部署模式</text><text class="small" x="500" y="226">单体 / 微服务按场景切换</text>
+<line class="line" x1="590" y1="136" x2="590" y2="180"/>
+<rect class="box" x="120" y="300" width="250" height="72"/><text class="txt" x="168" y="328">单体应用</text><text class="small" x="145" y="350">jeecg-system-start</text>
+<rect class="box" x="805" y="300" width="250" height="72"/><text class="txt" x="853" y="328">微服务入口</text><text class="small" x="840" y="350">Gateway / Nacos / Sentinel</text>
+<line class="line" x1="470" y1="220" x2="370" y2="300"/><line class="line" x1="710" y1="220" x2="805" y2="300"/>
+<rect class="box2" x="80" y="445" width="220" height="70"/><text class="txt" x="126" y="473">base-core</text><text class="small" x="105" y="494">鉴权 / AOP / 查询 / MyBatis</text>
+<rect class="box2" x="350" y="445" width="220" height="70"/><text class="txt" x="410" y="473">system-biz</text><text class="small" x="370" y="494">用户 / 权限 / 字典 / 日志</text>
+<rect class="box2" x="620" y="445" width="220" height="70"/><text class="txt" x="676" y="473">业务模块</text><text class="small" x="648" y="494">Demo / AI-RAG / 扩展</text>
+<line class="line" x1="245" y1="372" x2="190" y2="445"/><line class="line" x1="245" y1="372" x2="460" y2="445"/><line class="line" x1="930" y1="372" x2="730" y2="445"/>
+<rect class="box4" x="80" y="610" width="160" height="58"/><text class="txt" x="123" y="645">Redis</text>
+<rect class="box4" x="280" y="610" width="190" height="58"/><text class="txt" x="326" y="645">关系型数据库</text>
+<rect class="box4" x="510" y="610" width="160" height="58"/><text class="txt" x="560" y="645">PgVector</text>
+<rect class="box4" x="710" y="610" width="170" height="58"/><text class="txt" x="750" y="645">MinIO / OSS</text>
+<rect class="box4" x="920" y="610" width="170" height="58"/><text class="txt" x="964" y="645">Quartz / XXL</text>
+<line class="line" x1="190" y1="515" x2="160" y2="610"/><line class="line" x1="460" y1="515" x2="375" y2="610"/><line class="line" x1="730" y1="515" x2="590" y2="610"/><line class="line" x1="730" y1="515" x2="795" y2="610"/><line class="line" x1="460" y1="515" x2="1005" y2="610"/>
+</svg>

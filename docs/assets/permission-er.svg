@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1050" height="520" viewBox="0 0 1050 520"><defs>
+  <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+  <style>
+    .bg{fill:#f8fafc}.title{font:700 24px 'Microsoft YaHei',Arial,sans-serif;fill:#0f172a}.box{fill:#ffffff;stroke:#2563eb;stroke-width:1.6;rx:10}.box2{fill:#ecfeff;stroke:#0891b2;stroke-width:1.6;rx:10}.box3{fill:#fef3c7;stroke:#d97706;stroke-width:1.6;rx:10}.box4{fill:#f1f5f9;stroke:#64748b;stroke-width:1.6;rx:10}.txt{font:14px 'Microsoft YaHei',Arial,sans-serif;fill:#0f172a}.small{font:12px 'Microsoft YaHei',Arial,sans-serif;fill:#475569}.line{stroke:#334155;stroke-width:1.5;fill:none;marker-end:url(#arrow)}.dash{stroke:#64748b;stroke-width:1.4;fill:none;stroke-dasharray:5 4;marker-end:url(#arrow)}
+  </style>
+</defs>
+<rect class="bg" width="1050" height="520"/><text class="title" x="40" y="48">RBAC 与数据权限模型</text>
+<rect class="box" x="80" y="130" width="140" height="58"/><text class="txt" x="122" y="164">用户</text>
+<rect class="box4" x="280" y="130" width="150" height="58"/><text class="txt" x="310" y="164">用户-角色</text>
+<rect class="box" x="490" y="130" width="140" height="58"/><text class="txt" x="532" y="164">角色</text>
+<rect class="box4" x="690" y="130" width="150" height="58"/><text class="txt" x="720" y="164">角色-权限</text>
+<rect class="box" x="890" y="130" width="140" height="58"/><text class="txt" x="932" y="164">权限</text>
+<rect class="box2" x="890" y="275" width="140" height="58"/><text class="txt" x="910" y="309">数据权限规则</text>
+<rect class="box2" x="80" y="275" width="140" height="58"/><text class="txt" x="122" y="309">部门</text>
+<rect class="box4" x="280" y="275" width="150" height="58"/><text class="txt" x="310" y="309">用户-部门</text>
+<rect class="box2" x="490" y="275" width="140" height="58"/><text class="txt" x="532" y="309">租户</text>
+<rect class="box4" x="690" y="275" width="150" height="58"/><text class="txt" x="720" y="309">用户-租户</text>
+<line class="line" x1="220" y1="159" x2="280" y2="159"/><line class="line" x1="430" y1="159" x2="490" y2="159"/><line class="line" x1="630" y1="159" x2="690" y2="159"/><line class="line" x1="840" y1="159" x2="890" y2="159"/><line class="line" x1="960" y1="188" x2="960" y2="275"/>
+<line class="line" x1="220" y1="304" x2="280" y2="304"/><line class="dash" x1="150" y1="188" x2="150" y2="275"/><line class="line" x1="630" y1="304" x2="690" y2="304"/><line class="dash" x1="560" y1="188" x2="560" y2="275"/>
+<text class="small" x="120" y="400">用户通过角色获得菜单、按钮、接口权限；权限节点可继续配置数据规则。</text>
+</svg>

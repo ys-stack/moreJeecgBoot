@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1060" height="420" viewBox="0 0 1060 420"><defs>
+  <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+  <style>
+    .bg{fill:#f8fafc}.title{font:700 24px 'Microsoft YaHei',Arial,sans-serif;fill:#0f172a}.box{fill:#ffffff;stroke:#2563eb;stroke-width:1.6;rx:10}.box2{fill:#ecfeff;stroke:#0891b2;stroke-width:1.6;rx:10}.box3{fill:#fef3c7;stroke:#d97706;stroke-width:1.6;rx:10}.box4{fill:#f1f5f9;stroke:#64748b;stroke-width:1.6;rx:10}.txt{font:14px 'Microsoft YaHei',Arial,sans-serif;fill:#0f172a}.small{font:12px 'Microsoft YaHei',Arial,sans-serif;fill:#475569}.line{stroke:#334155;stroke-width:1.5;fill:none;marker-end:url(#arrow)}.dash{stroke:#64748b;stroke-width:1.4;fill:none;stroke-dasharray:5 4;marker-end:url(#arrow)}
+  </style>
+</defs>
+<rect class="bg" width="1060" height="420"/><text class="title" x="40" y="48">登录鉴权流程</text>
+<rect class="box" x="60" y="155" width="140" height="58"/><text class="txt" x="96" y="189">前端登录</text>
+<rect class="box" x="250" y="155" width="160" height="58"/><text class="txt" x="280" y="189">LoginController</text>
+<rect class="box2" x="460" y="90" width="170" height="58"/><text class="txt" x="500" y="124">Redis</text><text class="small" x="486" y="144">验证码 / 失败次数</text>
+<rect class="box2" x="460" y="225" width="170" height="58"/><text class="txt" x="492" y="259">SysUserService</text><text class="small" x="488" y="279">用户状态 / 密码</text>
+<rect class="box" x="690" y="155" width="140" height="58"/><text class="txt" x="728" y="189">JwtUtil</text>
+<rect class="box4" x="875" y="155" width="140" height="58"/><text class="txt" x="905" y="189">返回 token</text>
+<line class="line" x1="200" y1="184" x2="250" y2="184"/><line class="line" x1="410" y1="170" x2="460" y2="125"/><line class="line" x1="410" y1="198" x2="460" y2="250"/><line class="line" x1="630" y1="119" x2="690" y2="170"/><line class="line" x1="630" y1="254" x2="690" y2="198"/><line class="line" x1="830" y1="184" x2="875" y2="184"/>
+<text class="small" x="250" y="312">成功后：写入 token 缓存、用户缓存、记录登录日志</text>
+</svg>

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620"><defs>
+  <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+  <style>
+    .bg{fill:#f8fafc}.title{font:700 24px 'Microsoft YaHei',Arial,sans-serif;fill:#0f172a}.box{fill:#ffffff;stroke:#2563eb;stroke-width:1.6;rx:10}.box2{fill:#ecfeff;stroke:#0891b2;stroke-width:1.6;rx:10}.box3{fill:#fef3c7;stroke:#d97706;stroke-width:1.6;rx:10}.box4{fill:#f1f5f9;stroke:#64748b;stroke-width:1.6;rx:10}.txt{font:14px 'Microsoft YaHei',Arial,sans-serif;fill:#0f172a}.small{font:12px 'Microsoft YaHei',Arial,sans-serif;fill:#475569}.line{stroke:#334155;stroke-width:1.5;fill:none;marker-end:url(#arrow)}.dash{stroke:#64748b;stroke-width:1.4;fill:none;stroke-dasharray:5 4;marker-end:url(#arrow)}
+  </style>
+</defs>
+<rect class="bg" width="1120" height="620"/><text class="title" x="40" y="48">后端模块结构</text>
+<rect class="box3" x="430" y="80" width="260" height="56"/><text class="txt" x="495" y="114">jeecg-boot-parent</text>
+<rect class="box" x="60" y="220" width="220" height="70"/><text class="txt" x="98" y="250">base-core</text><text class="small" x="82" y="272">公共基础能力</text>
+<rect class="box" x="330" y="220" width="220" height="70"/><text class="txt" x="374" y="250">module-system</text><text class="small" x="365" y="272">系统管理</text>
+<rect class="box" x="600" y="220" width="220" height="70"/><text class="txt" x="650" y="250">boot-module</text><text class="small" x="654" y="272">业务扩展</text>
+<rect class="box" x="870" y="220" width="220" height="70"/><text class="txt" x="922" y="250">server-cloud</text><text class="small" x="925" y="272">微服务能力</text>
+<line class="line" x1="560" y1="136" x2="170" y2="220"/><line class="line" x1="560" y1="136" x2="440" y2="220"/><line class="line" x1="560" y1="136" x2="710" y2="220"/><line class="line" x1="560" y1="136" x2="980" y2="220"/>
+<rect class="box2" x="40" y="380" width="260" height="120"/><text class="small" x="65" y="410">Result / 异常 / 工具类</text><text class="small" x="65" y="435">Shiro / JWT / Filter</text><text class="small" x="65" y="460">MyBatis / 租户 / 分页</text><text class="small" x="65" y="485">QueryGenerator / AOP</text>
+<rect class="box2" x="310" y="380" width="260" height="120"/><text class="small" x="335" y="410">用户 / 角色 / 菜单</text><text class="small" x="335" y="435">部门 / 租户 / 数据权限</text><text class="small" x="335" y="460">消息 / 任务 / 日志</text><text class="small" x="335" y="485">字典 / 文件 / 公告</text>
+<rect class="box2" x="580" y="380" width="260" height="120"/><text class="small" x="605" y="410">业务示例模块</text><text class="small" x="605" y="435">AI 应用</text><text class="small" x="605" y="460">RAG 知识库</text><text class="small" x="605" y="485">Agent 工具调用</text>
+<rect class="box2" x="850" y="380" width="240" height="120"/><text class="small" x="875" y="410">Gateway</text><text class="small" x="875" y="435">Nacos</text><text class="small" x="875" y="460">Sentinel</text><text class="small" x="875" y="485">Monitor / XXL-Job</text>
+<line class="line" x1="170" y1="290" x2="170" y2="380"/><line class="line" x1="440" y1="290" x2="440" y2="380"/><line class="line" x1="710" y1="290" x2="710" y2="380"/><line class="line" x1="980" y1="290" x2="970" y2="380"/>
+</svg>
