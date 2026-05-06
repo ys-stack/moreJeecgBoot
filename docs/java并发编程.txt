@@ -72,4 +72,23 @@
 	默认情况下，Java 进程需要等待所有线程都运行结束，才会结束。
 	有一种特殊的线程叫做守护线程，只要其它非守护线程运行结束了，即使守护线程的代码没有执行完，也会强制结束。
 	**GC线程就是一种守护线程
-	**Tomcat中的 Acceptor 和 Poller 线程都是守护线程，所以 Tomcat 接收到 shutdown 命令后，不会等待它们处理完当前请求
+	**Tomcat中的 Acceptor 和 Poller 线程都是守护线程，所以 Tomcat 接收到 shutdown 命令后，不会等待它们处理完当
+	前请求
+
+--8.wait,notify,notifyAll,sleep
+	obj.wait() 让进入 object 监视器的线程到 waitSet 等待
+	obj.notify() 在 object 上正在 waitSet 等待的线程中挑一个唤醒
+	obj.notifyAll() 让 object 上正在 waitSet 等待的线程全部唤醒
+	sleep是Thread方法，且在睡眠的时候不会释放锁，而wait 在等待的时候会释放对象锁,这些线程携程的手段都需配合对象锁一起用
+
+--9.park和unPark
+	它们是是 LockSupport 类中的方法;它们是以线程为单位来阻塞和唤醒线程，而notify只是随机唤醒，并不准确
+	// 暂停当前线程
+	LockSupport.park(); 
+	// 恢复某个线程的运行
+	LockSupport.unpark(暂停线程对象)
+
+--10.线程的几种状态
+
+--11.死锁及生产环境的排查
+	
