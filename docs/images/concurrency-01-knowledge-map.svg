@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="620" viewBox="0 0 1180 620" role="img" aria-label="Java 并发编程知识地图">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/></filter>
+    <style>
+      .title{font:700 24px 'Microsoft YaHei',Arial,sans-serif;fill:#172033}
+      .node{filter:url(#shadow);stroke-width:2}
+      .text{font:700 16px 'Microsoft YaHei',Arial,sans-serif;fill:#172033;text-anchor:middle}
+      .small{font:600 13px 'Microsoft YaHei',Arial,sans-serif;fill:#475569;text-anchor:middle}
+      .line{stroke:#64748b;stroke-width:2.2;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1180" height="620" rx="18" fill="#f8fafc"/>
+  <text x="32" y="44" class="title">Java 并发编程面试知识地图</text>
+  <rect x="480" y="76" width="220" height="72" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/>
+  <text x="590" y="108" class="text">并发编程能力</text>
+  <text x="590" y="130" class="small">原理 + 工具 + 场景决策</text>
+  <g>
+    <rect x="70" y="220" width="170" height="80" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/>
+    <text x="155" y="252" class="text">线程基础</text><text x="155" y="276" class="small">状态 / 中断 / wait</text>
+    <rect x="285" y="220" width="170" height="80" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/>
+    <text x="370" y="252" class="text">JMM</text><text x="370" y="276" class="small">可见性 / 有序性</text>
+    <rect x="500" y="220" width="170" height="80" rx="12" fill="#fef3c7" stroke="#d97706" class="node"/>
+    <text x="585" y="252" class="text">锁体系</text><text x="585" y="276" class="small">synchronized / AQS</text>
+    <rect x="715" y="220" width="170" height="80" rx="12" fill="#ffe4e6" stroke="#e11d48" class="node"/>
+    <text x="800" y="252" class="text">线程池</text><text x="800" y="276" class="small">参数 / 队列 / 拒绝</text>
+    <rect x="930" y="220" width="170" height="80" rx="12" fill="#e0f2fe" stroke="#0284c7" class="node"/>
+    <text x="1015" y="252" class="text">并发容器</text><text x="1015" y="276" class="small">Map / Queue / 工具类</text>
+  </g>
+  <g>
+    <rect x="170" y="410" width="190" height="82" rx="12" fill="#ffffff" stroke="#2563eb" class="node"/>
+    <text x="265" y="442" class="text">异步编排</text><text x="265" y="466" class="small">Future / CompletableFuture</text>
+    <rect x="405" y="410" width="190" height="82" rx="12" fill="#ffffff" stroke="#16a34a" class="node"/>
+    <text x="500" y="442" class="text">性能排查</text><text x="500" y="466" class="small">jstack / top / 监控</text>
+    <rect x="640" y="410" width="190" height="82" rx="12" fill="#ffffff" stroke="#d97706" class="node"/>
+    <text x="735" y="442" class="text">风险治理</text><text x="735" y="466" class="small">死锁 / 阻塞 / 泄漏</text>
+    <rect x="875" y="410" width="190" height="82" rx="12" fill="#ffffff" stroke="#7c3aed" class="node"/>
+    <text x="970" y="442" class="text">场景决策</text><text x="970" y="466" class="small">IO / CPU / 一致性</text>
+  </g>
+  <line x1="590" y1="148" x2="155" y2="220" class="line"/>
+  <line x1="590" y1="148" x2="370" y2="220" class="line"/>
+  <line x1="590" y1="148" x2="585" y2="220" class="line"/>
+  <line x1="590" y1="148" x2="800" y2="220" class="line"/>
+  <line x1="590" y1="148" x2="1015" y2="220" class="line"/>
+  <line x1="585" y1="300" x2="265" y2="410" class="line"/>
+  <line x1="585" y1="300" x2="500" y2="410" class="line"/>
+  <line x1="800" y1="300" x2="735" y2="410" class="line"/>
+  <line x1="800" y1="300" x2="970" y2="410" class="line"/>
+</svg>

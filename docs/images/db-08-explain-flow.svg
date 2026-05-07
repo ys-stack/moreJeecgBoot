@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">EXPLAIN 分析流程</title>
+  <desc id="desc">慢 SQL 使用 EXPLAIN 从 type、key、rows、Extra 到改写 SQL 的分析步骤</desc>
+  <defs>
+    <style>
+      .bg{fill:#f8fafc}.title{font:700 32px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.step{fill:#fff;stroke:#cbd5e1;stroke-width:2;rx:14}
+      .good{fill:#ecfdf3;stroke:#7bc992}.warn{fill:#fff6df;stroke:#efc05e}.bad{fill:#fff0f0;stroke:#ef9292}.head{font:700 20px Arial,"Microsoft YaHei",sans-serif;fill:#172033}
+      .txt{font:400 16px Arial,"Microsoft YaHei",sans-serif;fill:#344054}.small{font:400 14px Arial,"Microsoft YaHei",sans-serif;fill:#667085}.arrow{stroke:#52677f;stroke-width:2.5;fill:none;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10 Z" fill="#52677f"/></marker>
+  </defs>
+  <rect class="bg" width="1280" height="760"/>
+  <text class="title" x="48" y="58">慢 SQL 排查：EXPLAIN 要看出“为什么慢”</text>
+  <rect class="step" x="80" y="130" width="230" height="115"/><text class="head" x="120" y="172">1. 定位 SQL</text><text class="small" x="115" y="205">慢日志 / APM / traceId</text>
+  <path class="arrow" d="M310 188 L380 188"/>
+  <rect class="step" x="380" y="130" width="230" height="115"/><text class="head" x="420" y="172">2. 看访问类型</text><text class="small" x="415" y="205">type: const/ref/range/index/all</text>
+  <path class="arrow" d="M610 188 L680 188"/>
+  <rect class="step" x="680" y="130" width="230" height="115"/><text class="head" x="720" y="172">3. 看索引选择</text><text class="small" x="715" y="205">possible_keys / key / key_len</text>
+  <path class="arrow" d="M910 188 L980 188"/>
+  <rect class="step" x="980" y="130" width="230" height="115"/><text class="head" x="1020" y="172">4. 看扫描量</text><text class="small" x="1015" y="205">rows / filtered 是否离谱</text>
+  <rect class="step" x="220" y="345" width="270" height="130"/><text class="head" x="260" y="388">5. 看 Extra</text><text class="small" x="255" y="420">Using filesort</text><text class="small" x="255" y="447">Using temporary</text>
+  <path class="arrow" d="M980 245 C910 330 720 400 490 410"/>
+  <path class="arrow" d="M490 410 L560 410"/>
+  <rect class="step" x="560" y="345" width="270" height="130"/><text class="head" x="600" y="388">6. 结合数据分布</text><text class="small" x="595" y="420">选择性、热点值、统计信息</text><text class="small" x="595" y="447">不是有索引就一定快</text>
+  <path class="arrow" d="M830 410 L900 410"/>
+  <rect class="step" x="900" y="345" width="270" height="130"/><text class="head" x="940" y="388">7. 改写与验证</text><text class="small" x="935" y="420">索引、SQL、分页、拆查询</text><text class="small" x="935" y="447">压测或线上灰度观察</text>
+  <rect class="good" x="85" y="585" width="330" height="70" rx="12"/><text class="txt" x="118" y="626">好信号：const/ref/range、覆盖索引、rows 小</text>
+  <rect class="warn" x="475" y="585" width="330" height="70" rx="12"/><text class="txt" x="508" y="626">警惕：Using filesort、Using temporary</text>
+  <rect class="bad" x="865" y="585" width="330" height="70" rx="12"/><text class="txt" x="898" y="626">危险：type=ALL、rows 巨大、回表过多</text>
+</svg>

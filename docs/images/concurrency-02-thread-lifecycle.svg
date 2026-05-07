@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="520" viewBox="0 0 1080 520" role="img" aria-label="Java 线程状态转换">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/></filter>
+    <style>.t{font:700 22px 'Microsoft YaHei',Arial,sans-serif;fill:#172033}.n{filter:url(#shadow);stroke-width:2}.x{font:700 16px 'Microsoft YaHei',Arial,sans-serif;fill:#172033;text-anchor:middle}.s{font:600 13px 'Microsoft YaHei',Arial,sans-serif;fill:#64748b;text-anchor:middle}.l{stroke:#64748b;stroke-width:2.2;marker-end:url(#arrow)}.d{stroke:#94a3b8;stroke-width:2;stroke-dasharray:6 5;marker-end:url(#arrow)}</style>
+  </defs>
+  <rect width="1080" height="520" rx="18" fill="#f8fafc"/>
+  <text x="32" y="42" class="t">Java 线程状态转换</text>
+  <rect x="70" y="220" width="140" height="64" rx="12" fill="#dbeafe" stroke="#2563eb" class="n"/><text x="140" y="247" class="x">NEW</text><text x="140" y="270" class="s">已创建</text>
+  <rect x="280" y="220" width="160" height="64" rx="12" fill="#dcfce7" stroke="#16a34a" class="n"/><text x="360" y="247" class="x">RUNNABLE</text><text x="360" y="270" class="s">可运行/运行中</text>
+  <rect x="515" y="95" width="170" height="64" rx="12" fill="#fef3c7" stroke="#d97706" class="n"/><text x="600" y="122" class="x">BLOCKED</text><text x="600" y="145" class="s">等待 monitor 锁</text>
+  <rect x="515" y="220" width="170" height="64" rx="12" fill="#ede9fe" stroke="#7c3aed" class="n"/><text x="600" y="247" class="x">WAITING</text><text x="600" y="270" class="s">无限等待</text>
+  <rect x="515" y="345" width="170" height="64" rx="12" fill="#e0f2fe" stroke="#0284c7" class="n"/><text x="600" y="372" class="x">TIMED_WAITING</text><text x="600" y="395" class="s">限时等待</text>
+  <rect x="805" y="220" width="160" height="64" rx="12" fill="#ffe4e6" stroke="#e11d48" class="n"/><text x="885" y="247" class="x">TERMINATED</text><text x="885" y="270" class="s">执行结束</text>
+  <line x1="210" y1="252" x2="280" y2="252" class="l"/><text x="245" y="235" class="s">start()</text>
+  <line x1="440" y1="252" x2="515" y2="128" class="l"/><text x="477" y="175" class="s">竞争锁失败</text>
+  <line x1="515" y1="145" x2="440" y2="235" class="l"/><text x="480" y="215" class="s">获得锁</text>
+  <line x1="440" y1="252" x2="515" y2="252" class="l"/><text x="477" y="235" class="s">wait/join/park</text>
+  <line x1="515" y1="270" x2="440" y2="270" class="l"/><text x="477" y="294" class="s">notify/unpark</text>
+  <line x1="440" y1="270" x2="515" y2="377" class="l"/><text x="465" y="345" class="s">sleep(timeout)</text>
+  <line x1="515" y1="360" x2="440" y2="270" class="l"/><text x="470" y="392" class="s">超时/唤醒</text>
+  <line x1="440" y1="252" x2="805" y2="252" class="d"/><text x="720" y="235" class="s">run 结束/异常退出</text>
+</svg>

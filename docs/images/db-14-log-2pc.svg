@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">Redo Binlog 两阶段提交</title>
+  <desc id="desc">事务提交时 Redo Log prepare、写 Binlog、Redo Log commit 的两阶段提交流程</desc>
+  <defs>
+    <style>
+      .bg{fill:#f8fafc}.title{font:700 32px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.lane{fill:white;stroke:#cbd5e1;stroke-width:2;rx:14}
+      .redo{fill:#fff0f0;stroke:#ef9292}.bin{fill:#fff6df;stroke:#efc05e}.srv{fill:#eaf2ff;stroke:#7db0ff}.ok{fill:#ecfdf3;stroke:#7bc992}
+      .head{font:700 21px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.txt{font:400 16px Arial,"Microsoft YaHei",sans-serif;fill:#344054}.small{font:400 14px Arial,"Microsoft YaHei",sans-serif;fill:#667085}.mono{font:400 15px Consolas,monospace;fill:#334155}
+      .arrow{stroke:#52677f;stroke-width:2.5;fill:none;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10 Z" fill="#52677f"/></marker>
+  </defs>
+  <rect class="bg" width="1280" height="760"/>
+  <text class="title" x="48" y="58">Redo Log 与 Binlog：两阶段提交保证一致</text>
+  <rect class="lane srv" x="100" y="120" width="250" height="115" rx="14"/><text class="head" x="145" y="165">执行事务更新</text><text class="small" x="140" y="200">修改 Buffer Pool 中的数据页</text>
+  <path class="arrow" d="M350 178 L430 178"/>
+  <rect class="lane redo" x="430" y="120" width="250" height="115" rx="14"/><text class="head" x="485" y="165">Redo prepare</text><text class="mono" x="490" y="200">prepare 状态</text>
+  <path class="arrow" d="M680 178 L760 178"/>
+  <rect class="lane bin" x="760" y="120" width="250" height="115" rx="14"/><text class="head" x="825" y="165">写 Binlog</text><text class="small" x="805" y="200">Server 层归档日志</text>
+  <path class="arrow" d="M1010 178 L1080 178"/>
+  <rect class="lane ok" x="1080" y="120" width="140" height="115" rx="14"/><text class="head" x="1105" y="165">Commit</text><text class="small" x="1102" y="200">Redo commit</text>
+  <rect class="lane" x="120" y="330" width="1040" height="190"/>
+  <text class="head" x="160" y="375">为什么需要两阶段？</text>
+  <text class="txt" x="160" y="415">Redo 是 InnoDB 的崩溃恢复日志，Binlog 是 Server 层的复制和归档日志。</text>
+  <text class="txt" x="160" y="450">如果只写一个就宕机，恢复出来的数据和复制出去的数据可能不一致。</text>
+  <text class="txt" x="160" y="485">两阶段提交让恢复时可以根据 Binlog 是否完整，决定 prepare 的 Redo 事务提交还是回滚。</text>
+  <rect class="lane" x="190" y="610" width="900" height="62"/>
+  <text class="txt" x="230" y="648">高频追问：Redo 物理日志、Binlog 逻辑日志；Redo 循环写，Binlog 追加写</text>
+</svg>

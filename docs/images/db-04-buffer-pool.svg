@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">Buffer Pool 与刷盘机制</title>
+  <desc id="desc">InnoDB Buffer Pool 缓存页、LRU、脏页、Redo Log 和磁盘刷盘流程</desc>
+  <defs>
+    <style>
+      .bg{fill:#f8fafc}.title{font:700 32px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.box{fill:#fff;stroke:#cbd5e1;stroke-width:2;rx:12}
+      .pool{fill:#eaf2ff;stroke:#77adff}.dirty{fill:#fff0f0;stroke:#ef8f8f}.redo{fill:#fff6df;stroke:#e7ba55}.disk{fill:#edf8ef;stroke:#82ca96}
+      .head{font:700 21px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.txt{font:400 16px Arial,"Microsoft YaHei",sans-serif;fill:#344054}.small{font:400 14px Arial,"Microsoft YaHei",sans-serif;fill:#667085}
+      .arrow{stroke:#52677f;stroke-width:2.5;fill:none;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10 Z" fill="#52677f"/></marker>
+  </defs>
+  <rect class="bg" width="1280" height="760"/>
+  <text class="title" x="48" y="58">Buffer Pool：读写性能的第一现场</text>
+  <rect class="box" x="65" y="115" width="255" height="160"/>
+  <text class="head" x="100" y="158">SQL 访问数据页</text>
+  <text class="txt" x="100" y="195">先查 Buffer Pool</text>
+  <text class="small" x="100" y="225">命中则内存读；未命中从磁盘加载页</text>
+  <path class="arrow" d="M320 195 L410 195"/>
+  <rect class="pool" x="410" y="95" width="460" height="310" rx="16"/>
+  <text class="head" x="450" y="140">Buffer Pool</text>
+  <rect class="box" x="450" y="170" width="110" height="70"/><text class="small" x="478" y="212">干净页</text>
+  <rect class="dirty" x="585" y="170" width="110" height="70"/><text class="small" x="613" y="212">脏页</text>
+  <rect class="box" x="720" y="170" width="110" height="70"/><text class="small" x="748" y="212">索引页</text>
+  <rect class="box" x="450" y="270" width="380" height="70"/><text class="txt" x="500" y="312">改进版 LRU：young / old 区</text>
+  <text class="small" x="450" y="373">预读失败、全表扫描污染、脏页比例都会影响延迟</text>
+  <path class="arrow" d="M640 405 L640 470"/>
+  <rect class="redo" x="440" y="470" width="400" height="105" rx="14"/>
+  <text class="head" x="475" y="512">Redo Log</text>
+  <text class="txt" x="475" y="545">先写日志，保证崩溃后可重放</text>
+  <path class="arrow" d="M870 250 L965 250"/>
+  <rect class="disk" x="965" y="150" width="250" height="195" rx="16"/>
+  <text class="head" x="1028" y="195">磁盘数据文件</text>
+  <text class="txt" x="1010" y="235">.ibd 数据页</text>
+  <text class="small" x="1010" y="270">脏页异步刷盘</text>
+  <text class="small" x="1010" y="300">Checkpoint 推进</text>
+  <path class="arrow" d="M840 525 C970 520 1040 440 1085 345"/>
+  <rect class="box" x="140" y="640" width="1000" height="60"/>
+  <text class="txt" x="180" y="677">面试关键词：随机 IO 变顺序写、写放大、脏页刷盘抖动、Buffer Pool 命中率、Checkpoint</text>
+</svg>

@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">数据库面试知识地图</title>
+  <desc id="desc">Java 工程师数据库能力从存储引擎、索引、事务、锁、SQL 优化到架构治理的全景图</desc>
+  <defs>
+    <style>
+      .bg{fill:#f7f9fc}.title{font:700 34px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.sub{font:400 18px Arial,"Microsoft YaHei",sans-serif;fill:#5b667a}
+      .core{fill:#1f6feb}.coreText{font:700 24px Arial,"Microsoft YaHei",sans-serif;fill:white}.box{fill:white;stroke:#ccd6e3;stroke-width:2;rx:12}
+      .head{font:700 20px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.txt{font:400 16px Arial,"Microsoft YaHei",sans-serif;fill:#384254}.line{stroke:#8da2bd;stroke-width:2.5;fill:none}
+      .pill{fill:#e9f2ff;stroke:#9dc4ff}.pill2{fill:#fff4df;stroke:#ffd28a}.pill3{fill:#eaf8ef;stroke:#93d9a9}.pill4{fill:#f5ecff;stroke:#c9a1ff}
+    </style>
+  </defs>
+  <rect class="bg" width="1280" height="760"/>
+  <text class="title" x="48" y="58">Java 后端数据库面试知识地图</text>
+  <text class="sub" x="48" y="90">从单机 MySQL/InnoDB 的底层原理，到高并发系统中的一致性、扩展性与排障表达</text>
+  <rect class="core" x="488" y="285" width="304" height="128" rx="20"/>
+  <text class="coreText" x="548" y="338">数据库核心能力</text>
+  <text class="coreText" x="526" y="374">原理 + 场景 + 表达</text>
+  <path class="line" d="M488 315 C390 290 330 230 280 160"/>
+  <path class="line" d="M640 285 C640 225 640 180 640 135"/>
+  <path class="line" d="M792 315 C900 285 960 225 1005 160"/>
+  <path class="line" d="M488 385 C390 415 330 505 270 590"/>
+  <path class="line" d="M640 413 C640 480 640 535 640 610"/>
+  <path class="line" d="M792 385 C900 430 960 520 1010 610"/>
+  <rect class="box" x="58" y="125" width="310" height="145"/>
+  <rect class="pill" x="78" y="145" width="96" height="30" rx="15"/><text class="txt" x="96" y="166">底层</text>
+  <text class="head" x="78" y="205">存储引擎与文件结构</text>
+  <text class="txt" x="78" y="235">InnoDB、页、区、段、Buffer Pool</text>
+  <text class="txt" x="78" y="260">Redo/Undo/Binlog、崩溃恢复</text>
+  <rect class="box" x="485" y="115" width="310" height="145"/>
+  <rect class="pill2" x="505" y="135" width="96" height="30" rx="15"/><text class="txt" x="523" y="156">性能</text>
+  <text class="head" x="505" y="195">索引与 SQL 优化</text>
+  <text class="txt" x="505" y="225">B+Tree、联合索引、覆盖索引</text>
+  <text class="txt" x="505" y="250">EXPLAIN、慢 SQL、执行计划</text>
+  <rect class="box" x="912" y="125" width="310" height="145"/>
+  <rect class="pill3" x="932" y="145" width="96" height="30" rx="15"/><text class="txt" x="950" y="166">一致</text>
+  <text class="head" x="932" y="205">事务、锁与 MVCC</text>
+  <text class="txt" x="932" y="235">ACID、隔离级别、快照读/当前读</text>
+  <text class="txt" x="932" y="260">行锁、间隙锁、死锁治理</text>
+  <rect class="box" x="58" y="505" width="330" height="150"/>
+  <rect class="pill4" x="78" y="525" width="96" height="30" rx="15"/><text class="txt" x="96" y="546">设计</text>
+  <text class="head" x="78" y="585">表设计与数据建模</text>
+  <text class="txt" x="78" y="615">范式/反范式、字段类型、冷热数据</text>
+  <text class="txt" x="78" y="640">大表治理、归档、唯一约束</text>
+  <rect class="box" x="485" y="530" width="310" height="145"/>
+  <rect class="pill" x="505" y="550" width="96" height="30" rx="15"/><text class="txt" x="523" y="571">工程</text>
+  <text class="head" x="505" y="610">Java 访问与事务边界</text>
+  <text class="txt" x="505" y="640">连接池、MyBatis、Spring 事务</text>
+  <text class="txt" x="505" y="665">幂等、补偿、批处理、分页</text>
+  <rect class="box" x="902" y="505" width="330" height="150"/>
+  <rect class="pill2" x="922" y="525" width="96" height="30" rx="15"/><text class="txt" x="940" y="546">架构</text>
+  <text class="head" x="922" y="585">高可用与分布式数据</text>
+  <text class="txt" x="922" y="615">主从复制、读写分离、分库分表</text>
+  <text class="txt" x="922" y="640">缓存一致性、迁移、容量规划</text>
+</svg>

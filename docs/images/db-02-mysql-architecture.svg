@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">MySQL 逻辑架构</title>
+  <desc id="desc">MySQL 从客户端连接到 Server 层、优化器、执行器和 InnoDB 存储引擎的调用链</desc>
+  <defs>
+    <style>
+      .bg{fill:#f8fafc}.title{font:700 32px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.box{fill:#fff;stroke:#cbd5e1;stroke-width:2;rx:12}
+      .layer{fill:#eaf2ff;stroke:#83b4ff}.engine{fill:#ecfdf3;stroke:#77c691}.log{fill:#fff7e6;stroke:#f2bd5b}.txt{font:400 17px Arial,"Microsoft YaHei",sans-serif;fill:#334155}
+      .head{font:700 22px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.small{font:400 15px Arial,"Microsoft YaHei",sans-serif;fill:#64748b}.arrow{stroke:#56708f;stroke-width:2.5;fill:none;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10 Z" fill="#56708f"/></marker>
+  </defs>
+  <rect class="bg" width="1280" height="760"/>
+  <text class="title" x="48" y="58">MySQL 逻辑架构：面试回答先分层</text>
+  <rect class="box" x="80" y="100" width="1120" height="90"/>
+  <text class="head" x="112" y="140">客户端层</text>
+  <text class="txt" x="300" y="135">JDBC / MyBatis / 连接池 / 应用服务</text>
+  <text class="small" x="300" y="164">建立连接、认证、网络协议、连接复用，慢查询通常从这里开始观察调用链</text>
+  <path class="arrow" d="M640 190 L640 235"/>
+  <rect class="layer" x="80" y="235" width="1120" height="245" rx="14"/>
+  <text class="head" x="112" y="278">Server 层</text>
+  <rect class="box" x="130" y="315" width="190" height="100"/><text class="txt" x="170" y="355">连接器</text><text class="small" x="150" y="385">认证、权限、会话</text>
+  <rect class="box" x="360" y="315" width="190" height="100"/><text class="txt" x="400" y="355">分析器</text><text class="small" x="382" y="385">词法、语法检查</text>
+  <rect class="box" x="590" y="315" width="190" height="100"/><text class="txt" x="630" y="355">优化器</text><text class="small" x="614" y="385">索引选择、Join 顺序</text>
+  <rect class="box" x="820" y="315" width="190" height="100"/><text class="txt" x="860" y="355">执行器</text><text class="small" x="842" y="385">调用引擎、返回结果</text>
+  <path class="arrow" d="M320 365 L360 365"/><path class="arrow" d="M550 365 L590 365"/><path class="arrow" d="M780 365 L820 365"/>
+  <text class="small" x="130" y="452">Server 层负责 SQL 生命周期，与具体数据如何落盘解耦；优化器不保证永远选到最优路径</text>
+  <path class="arrow" d="M640 480 L640 525"/>
+  <rect class="engine" x="80" y="525" width="760" height="155" rx="14"/>
+  <text class="head" x="112" y="568">InnoDB 存储引擎</text>
+  <text class="txt" x="112" y="608">Buffer Pool、B+Tree、行锁、MVCC、Redo、Undo、崩溃恢复</text>
+  <text class="small" x="112" y="640">负责数据页读写、事务一致性、并发控制，是 MySQL 面试最核心的落点</text>
+  <rect class="log" x="890" y="525" width="310" height="155" rx="14"/>
+  <text class="head" x="922" y="568">日志与复制</text>
+  <text class="txt" x="922" y="608">Binlog / Redo Log</text>
+  <text class="small" x="922" y="640">两阶段提交保证事务日志一致，Binlog 支撑复制与恢复</text>
+  <path class="arrow" d="M840 600 L890 600"/>
+</svg>

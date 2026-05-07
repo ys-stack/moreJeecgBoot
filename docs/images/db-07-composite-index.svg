@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">联合索引最左前缀</title>
+  <desc id="desc">联合索引按照多列有序组织，展示最左前缀、范围截断和排序复用</desc>
+  <defs>
+    <style>
+      .bg{fill:#fbfcfe}.title{font:700 32px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.box{fill:#fff;stroke:#cbd5e1;stroke-width:2;rx:12}
+      .ok{fill:#ecfdf3;stroke:#7bc992}.bad{fill:#fff0f0;stroke:#ee8f8f}.mid{fill:#fff6df;stroke:#efc05e}.idx{fill:#eaf2ff;stroke:#7db0ff}
+      .head{font:700 22px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.txt{font:400 16px Arial,"Microsoft YaHei",sans-serif;fill:#344054}.small{font:400 14px Arial,"Microsoft YaHei",sans-serif;fill:#667085}.mono{font:400 15px Consolas,monospace;fill:#334155}
+    </style>
+  </defs>
+  <rect class="bg" width="1280" height="760"/>
+  <text class="title" x="48" y="58">联合索引：最左前缀不是口诀，是排序规则</text>
+  <rect class="idx" x="115" y="115" width="1050" height="100" rx="16"/>
+  <text class="head" x="150" y="155">索引 idx_user_status_time(user_id, status, created_at)</text>
+  <text class="txt" x="150" y="188">先按 user_id 排序；user_id 相同再按 status；status 相同再按 created_at</text>
+  <rect class="box" x="110" y="270" width="320" height="150"/>
+  <text class="head" x="145" y="310">完全命中</text>
+  <text class="mono" x="145" y="345">where user_id=?</text>
+  <text class="mono" x="145" y="374">and status=?</text>
+  <text class="mono" x="145" y="403">order by created_at</text>
+  <rect class="ok" x="145" y="445" width="250" height="48" rx="10"/><text class="txt" x="190" y="476">可过滤，也可利用排序</text>
+  <rect class="box" x="480" y="270" width="320" height="150"/>
+  <text class="head" x="515" y="310">中间断裂</text>
+  <text class="mono" x="515" y="345">where user_id=?</text>
+  <text class="mono" x="515" y="374">and created_at&gt;?</text>
+  <text class="small" x="515" y="405">缺少 status，created_at 难以精确定位</text>
+  <rect class="mid" x="515" y="445" width="250" height="48" rx="10"/><text class="txt" x="555" y="476">只用到 user_id 前缀</text>
+  <rect class="box" x="850" y="270" width="320" height="150"/>
+  <text class="head" x="885" y="310">范围截断</text>
+  <text class="mono" x="885" y="345">where user_id=?</text>
+  <text class="mono" x="885" y="374">and status&gt;?</text>
+  <text class="mono" x="885" y="403">and created_at=?</text>
+  <rect class="bad" x="885" y="445" width="250" height="48" rx="10"/><text class="txt" x="928" y="476">范围后列难以继续用</text>
+  <rect class="box" x="145" y="585" width="990" height="82"/>
+  <text class="txt" x="185" y="622">设计原则：高区分度、等值条件靠前，范围字段尽量靠后；同时照顾 order by / group by，避免额外排序</text>
+  <text class="small" x="185" y="650">面试别只背口诀，要说明“联合索引的物理有序性决定可用前缀”</text>
+</svg>

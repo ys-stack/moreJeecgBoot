@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="520" viewBox="0 0 1120 520" role="img" aria-label="死锁排查流程">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/></filter>
+    <style>.title{font:700 22px 'Microsoft YaHei',Arial,sans-serif;fill:#172033}.node{filter:url(#shadow);stroke-width:2}.txt{font:700 15px 'Microsoft YaHei',Arial,sans-serif;fill:#172033;text-anchor:middle}.small{font:600 12px 'Microsoft YaHei',Arial,sans-serif;fill:#64748b;text-anchor:middle}.line{stroke:#64748b;stroke-width:2.2;marker-end:url(#arrow)}</style>
+  </defs>
+  <rect width="1120" height="520" rx="18" fill="#f8fafc"/>
+  <text x="32" y="42" class="title">线上死锁/阻塞排查流程</text>
+  <rect x="60" y="130" width="150" height="62" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/><text x="135" y="166" class="txt">接口卡住</text>
+  <rect x="270" y="130" width="160" height="62" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/><text x="350" y="157" class="txt">jstack / jcmd</text><text x="350" y="178" class="small">导出线程栈</text>
+  <rect x="490" y="130" width="170" height="62" rx="12" fill="#fef3c7" stroke="#d97706" class="node"/><text x="575" y="157" class="txt">搜索 deadlock</text><text x="575" y="178" class="small">Found one Java-level</text>
+  <rect x="720" y="130" width="170" height="62" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/><text x="805" y="157" class="txt">定位锁对象</text><text x="805" y="178" class="small">waiting / locked</text>
+  <rect x="950" y="130" width="130" height="62" rx="12" fill="#ffe4e6" stroke="#e11d48" class="node"/><text x="1015" y="166" class="txt">改代码</text>
+  <line x1="210" y1="161" x2="270" y2="161" class="line"/><line x1="430" y1="161" x2="490" y2="161" class="line"/><line x1="660" y1="161" x2="720" y2="161" class="line"/><line x1="890" y1="161" x2="950" y2="161" class="line"/>
+  <rect x="120" y="320" width="210" height="70" rx="12" fill="#ffffff" stroke="#2563eb" class="node"/><text x="225" y="349" class="txt">统一加锁顺序</text><text x="225" y="372" class="small">A 后 B，所有代码一致</text>
+  <rect x="455" y="320" width="210" height="70" rx="12" fill="#ffffff" stroke="#16a34a" class="node"/><text x="560" y="349" class="txt">缩小锁粒度</text><text x="560" y="372" class="small">减少持锁时间</text>
+  <rect x="790" y="320" width="210" height="70" rx="12" fill="#ffffff" stroke="#d97706" class="node"/><text x="895" y="349" class="txt">tryLock 超时</text><text x="895" y="372" class="small">失败释放已持有锁</text>
+  <text x="560" y="465" class="small">没有 deadlock 也可能是锁竞争：大量 BLOCKED、等待数据库连接、等待 Redis/MQ 响应，都要结合线程栈和监控判断。</text>
+</svg>

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">InnoDB 存储结构</title>
+  <desc id="desc">InnoDB 表空间、段、区、页、行记录和 Buffer Pool 的关系</desc>
+  <defs>
+    <style>
+      .bg{fill:#fbfcfe}.title{font:700 32px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.box{fill:#fff;stroke:#cbd5e1;stroke-width:2;rx:12}
+      .blue{fill:#eaf2ff;stroke:#82b5ff}.green{fill:#ebf8ef;stroke:#85cf9b}.yellow{fill:#fff6df;stroke:#efc05e}.red{fill:#fff0f0;stroke:#f19999}
+      .head{font:700 22px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.txt{font:400 16px Arial,"Microsoft YaHei",sans-serif;fill:#344054}.small{font:400 14px Arial,"Microsoft YaHei",sans-serif;fill:#667085}
+      .arrow{stroke:#64748b;stroke-width:2.5;fill:none;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10 Z" fill="#64748b"/></marker>
+  </defs>
+  <rect class="bg" width="1280" height="760"/>
+  <text class="title" x="48" y="58">InnoDB 存储结构：面试要从“页”讲起</text>
+  <rect class="blue" x="70" y="110" width="250" height="520" rx="16"/>
+  <text class="head" x="105" y="155">表空间 Tablespace</text>
+  <text class="txt" x="105" y="195">.ibd / 系统表空间</text>
+  <text class="small" x="105" y="225">数据和索引最终都组织在表空间中</text>
+  <rect class="green" x="380" y="140" width="250" height="430" rx="16"/>
+  <text class="head" x="430" y="185">段 Segment</text>
+  <text class="txt" x="430" y="225">数据段 / 索引段 / 回滚段</text>
+  <text class="small" x="430" y="255">按用途管理空间</text>
+  <rect class="yellow" x="690" y="170" width="250" height="340" rx="16"/>
+  <text class="head" x="775" y="215">区 Extent</text>
+  <text class="txt" x="755" y="255">默认 1MB</text>
+  <text class="small" x="735" y="285">连续 64 个 16KB 页</text>
+  <rect class="red" x="1000" y="200" width="210" height="250" rx="16"/>
+  <text class="head" x="1072" y="245">页 Page</text>
+  <text class="txt" x="1055" y="285">默认 16KB</text>
+  <text class="small" x="1030" y="315">B+Tree 节点基本单位</text>
+  <text class="small" x="1030" y="345">一次 IO 通常读页</text>
+  <path class="arrow" d="M320 360 L380 360"/><path class="arrow" d="M630 360 L690 360"/><path class="arrow" d="M940 360 L1000 360"/>
+  <rect class="box" x="145" y="670" width="990" height="58"/>
+  <text class="txt" x="180" y="706">行记录存在数据页中；聚簇索引叶子页就是完整行数据，二级索引叶子页保存索引列 + 主键值</text>
+  <rect class="box" x="1000" y="485" width="210" height="125"/>
+  <text class="head" x="1030" y="525">Buffer Pool</text>
+  <text class="small" x="1030" y="555">缓存数据页、索引页</text>
+  <text class="small" x="1030" y="582">脏页刷盘由后台线程完成</text>
+  <path class="arrow" d="M1105 450 L1105 485"/>
+</svg>

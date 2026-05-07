@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">缓存与数据库一致性</title>
+  <desc id="desc">Cache Aside 模式下读缓存、查数据库、回填缓存、更新数据库再删缓存的流程</desc>
+  <defs>
+    <style>
+      .bg{fill:#fbfcfe}.title{font:700 32px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.box{fill:white;stroke:#cbd5e1;stroke-width:2;rx:14}
+      .app{fill:#eaf2ff;stroke:#7db0ff}.cache{fill:#fff6df;stroke:#efc05e}.db{fill:#ecfdf3;stroke:#7bc992}.warn{fill:#fff0f0;stroke:#ef9292}
+      .head{font:700 21px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.txt{font:400 16px Arial,"Microsoft YaHei",sans-serif;fill:#344054}.small{font:400 14px Arial,"Microsoft YaHei",sans-serif;fill:#667085}
+      .arrow{stroke:#52677f;stroke-width:2.5;fill:none;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10 Z" fill="#52677f"/></marker>
+  </defs>
+  <rect class="bg" width="1280" height="760"/>
+  <text class="title" x="48" y="58">缓存一致性：面试最稳的是 Cache Aside</text>
+  <rect class="app" x="100" y="145" width="230" height="100" rx="16"/><text class="head" x="170" y="203">应用</text>
+  <rect class="cache" x="520" y="115" width="240" height="100" rx="16"/><text class="head" x="595" y="173">Redis</text>
+  <rect class="db" x="950" y="145" width="230" height="100" rx="16"/><text class="head" x="1020" y="203">MySQL</text>
+  <path class="arrow" d="M330 180 L520 165"/><text class="small" x="380" y="145">1. 读缓存</text>
+  <path class="arrow" d="M520 205 L330 220"/><text class="small" x="385" y="245">命中直接返回</text>
+  <path class="arrow" d="M640 215 C720 300 870 305 970 245"/><text class="small" x="705" y="300">2. 未命中查库</text>
+  <path class="arrow" d="M950 205 C820 250 735 245 650 215"/><text class="small" x="780" y="210">3. 回填缓存</text>
+  <rect class="box" x="155" y="360" width="970" height="105"/>
+  <text class="head" x="195" y="405">更新流程推荐</text>
+  <text class="txt" x="195" y="440">先更新数据库，再删除缓存；失败要有重试、消息补偿或订阅 Binlog 修复</text>
+  <rect class="warn" x="155" y="530" width="970" height="110" rx="16"/>
+  <text class="head" x="195" y="575">为什么不是先删缓存再更新库？</text>
+  <text class="txt" x="195" y="610">并发读可能在数据库更新前读到旧值并回填缓存，导致旧缓存长期存在。</text>
+  <text class="small" x="195" y="638">延迟双删能降低窗口，但不能代替补偿机制和过期时间</text>
+</svg>

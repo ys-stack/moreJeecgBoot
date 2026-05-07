@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">MySQL 主从复制</title>
+  <desc id="desc">主库写 Binlog，从库 IO 线程拉取 Relay Log，SQL 线程重放的复制链路</desc>
+  <defs>
+    <style>
+      .bg{fill:#fbfcfe}.title{font:700 32px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.box{fill:white;stroke:#cbd5e1;stroke-width:2;rx:14}
+      .master{fill:#eaf2ff;stroke:#7db0ff}.slave{fill:#ecfdf3;stroke:#7bc992}.log{fill:#fff6df;stroke:#efc05e}.warn{fill:#fff0f0;stroke:#ef9292}
+      .head{font:700 21px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.txt{font:400 16px Arial,"Microsoft YaHei",sans-serif;fill:#344054}.small{font:400 14px Arial,"Microsoft YaHei",sans-serif;fill:#667085}
+      .arrow{stroke:#52677f;stroke-width:2.5;fill:none;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10 Z" fill="#52677f"/></marker>
+  </defs>
+  <rect class="bg" width="1280" height="760"/>
+  <text class="title" x="48" y="58">主从复制：读写分离之前先理解延迟</text>
+  <rect class="master" x="95" y="145" width="310" height="240" rx="16"/>
+  <text class="head" x="190" y="190">主库 Master</text>
+  <text class="txt" x="145" y="240">业务写入</text>
+  <rect class="log" x="145" y="280" width="210" height="60" rx="12"/><text class="txt" x="215" y="318">Binlog</text>
+  <path class="arrow" d="M405 310 L525 310"/>
+  <rect class="box" x="525" y="220" width="230" height="180"/>
+  <text class="head" x="595" y="265">网络传输</text>
+  <text class="small" x="565" y="305">从库 IO 线程拉取</text>
+  <text class="small" x="565" y="335">写入 Relay Log</text>
+  <path class="arrow" d="M755 310 L875 310"/>
+  <rect class="slave" x="875" y="145" width="310" height="240" rx="16"/>
+  <text class="head" x="970" y="190">从库 Slave</text>
+  <rect class="log" x="925" y="240" width="210" height="60" rx="12"/><text class="txt" x="995" y="278">Relay Log</text>
+  <text class="txt" x="925" y="335">SQL 线程重放事务</text>
+  <rect class="warn" x="130" y="500" width="1020" height="110" rx="16"/>
+  <text class="head" x="170" y="545">复制延迟常见原因</text>
+  <text class="txt" x="170" y="582">大事务、从库单线程重放压力、网络抖动、DDL、主库写入峰值、从库资源不足</text>
+  <text class="small" x="170" y="610">工程策略：强一致读走主库；读己之写带主库路由；监控 seconds_behind_master / GTID 位点</text>
+</svg>

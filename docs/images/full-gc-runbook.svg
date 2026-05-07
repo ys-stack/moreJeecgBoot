@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1020" height="600" viewBox="0 0 1020 600" role="img" aria-label="频繁 Full GC 排查流程">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L8,3 z" fill="#607086" />
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+  <rect width="100%" height="100%" rx="18" fill="#f8fafc"/>
+  <text x="32" y="42" font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="22" font-weight="700" fill="#172033">频繁 Full GC 排查流程</text>
+  
+  <rect x="400" y="70" width="220" height="56" rx="12" fill="#ffe4e6" stroke="#e11d48" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="510" y="104">频繁 Full GC</tspan></text>
+
+  <rect x="390" y="150" width="240" height="56" rx="12" fill="#ffffff" stroke="#2563eb" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="510" y="184">看 GC 日志触发原因</tspan></text>
+
+  <polygon points="510,245 670,292.5 510,340 350,292.5" fill="#fef3c7" stroke="#d97706" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="14" font-weight="700" fill="#172033" text-anchor="middle"><tspan x="510" y="288.5">Full GC 后</tspan><tspan x="510" y="308.5">内存是否下降</tspan></text>
+
+  <rect x="60" y="385" width="230" height="56" rx="12" fill="#ffe4e6" stroke="#e11d48" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="175" y="409">下降少</tspan><tspan x="175" y="429">怀疑内存泄漏</tspan></text>
+
+  <rect x="380" y="385" width="270" height="56" rx="12" fill="#dcfce7" stroke="#16a34a" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="515" y="409">下降多</tspan><tspan x="515" y="429">对象创建太快或堆参数不合理</tspan></text>
+
+  <rect x="720" y="200" width="230" height="56" rx="12" fill="#fef3c7" stroke="#d97706" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="835" y="224">Metaspace 高</tspan><tspan x="835" y="244">类加载过多或动态生成类</tspan></text>
+
+  <rect x="720" y="315" width="230" height="56" rx="12" fill="#fef3c7" stroke="#d97706" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="835" y="339">System.gc</tspan><tspan x="835" y="359">排查代码或依赖显式 GC</tspan></text>
+
+  <rect x="720" y="430" width="230" height="56" rx="12" fill="#fef3c7" stroke="#d97706" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="835" y="454">晋升失败</tspan><tspan x="835" y="474">调整比例或降低对象存活</tspan></text>
+<line x1="510" y1="126" x2="510" y2="150" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/>
+<line x1="510" y1="206" x2="510" y2="245" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/>
+<line x1="350" y1="292" x2="175" y2="385" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/><text x="262.5" y="330.5" font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="13" font-weight="600" fill="#607086" text-anchor="middle">否</text>
+<line x1="535" y1="340" x2="515" y2="385" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/><text x="525" y="354.5" font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="13" font-weight="600" fill="#607086" text-anchor="middle">是</text>
+<line x1="630" y1="178" x2="720" y2="228" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/>
+<line x1="630" y1="178" x2="720" y2="343" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/>
+<line x1="630" y1="178" x2="720" y2="458" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/>
+</svg>

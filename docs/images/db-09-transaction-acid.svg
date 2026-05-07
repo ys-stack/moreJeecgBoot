@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">事务 ACID 与日志关系</title>
+  <desc id="desc">原子性、一致性、隔离性、持久性与 Undo、Redo、锁、约束的关系</desc>
+  <defs>
+    <style>
+      .bg{fill:#fbfcfe}.title{font:700 32px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.center{fill:#1f6feb}.card{fill:#fff;stroke:#cbd5e1;stroke-width:2;rx:14}
+      .a{fill:#eaf2ff;stroke:#7db0ff}.c{fill:#ecfdf3;stroke:#7bc992}.i{fill:#fff6df;stroke:#efc05e}.d{fill:#fff0f0;stroke:#ef9292}
+      .head{font:700 22px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.white{font:700 24px Arial,"Microsoft YaHei",sans-serif;fill:white}.txt{font:400 16px Arial,"Microsoft YaHei",sans-serif;fill:#344054}.small{font:400 14px Arial,"Microsoft YaHei",sans-serif;fill:#667085}
+      .line{stroke:#64748b;stroke-width:2.4;fill:none}
+    </style>
+  </defs>
+  <rect class="bg" width="1280" height="760"/>
+  <text class="title" x="48" y="58">事务 ACID：不要只背定义，要讲实现支撑</text>
+  <rect class="center" x="510" y="305" width="260" height="120" rx="20"/>
+  <text class="white" x="585" y="355">Transaction</text>
+  <text class="white" x="572" y="390">业务一致性边界</text>
+  <path class="line" d="M510 330 L370 220"/><path class="line" d="M770 330 L910 220"/><path class="line" d="M510 400 L370 520"/><path class="line" d="M770 400 L910 520"/>
+  <rect class="a" x="95" y="135" width="310" height="155" rx="16"/>
+  <text class="head" x="130" y="180">A 原子性</text>
+  <text class="txt" x="130" y="215">要么全部成功，要么全部回滚</text>
+  <text class="small" x="130" y="245">实现支撑：Undo Log 记录旧值</text>
+  <rect class="c" x="875" y="135" width="310" height="155" rx="16"/>
+  <text class="head" x="910" y="180">C 一致性</text>
+  <text class="txt" x="910" y="215">事务前后约束与业务规则成立</text>
+  <text class="small" x="910" y="245">支撑：约束、代码校验、A/I/D</text>
+  <rect class="i" x="95" y="485" width="310" height="155" rx="16"/>
+  <text class="head" x="130" y="530">I 隔离性</text>
+  <text class="txt" x="130" y="565">并发事务相互影响被限制</text>
+  <text class="small" x="130" y="595">支撑：锁、MVCC、隔离级别</text>
+  <rect class="d" x="875" y="485" width="310" height="155" rx="16"/>
+  <text class="head" x="910" y="530">D 持久性</text>
+  <text class="txt" x="910" y="565">提交后的修改不会因宕机丢失</text>
+  <text class="small" x="910" y="595">支撑：Redo Log、刷盘策略</text>
+  <rect class="card" x="330" y="670" width="620" height="54"/>
+  <text class="txt" x="370" y="704">面试表达：一致性是目标，原子性、隔离性、持久性是数据库提供的关键手段</text>
+</svg>

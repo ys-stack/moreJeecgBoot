@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">聚簇索引与二级索引</title>
+  <desc id="desc">聚簇索引叶子节点保存完整行，二级索引叶子节点保存主键并可能回表</desc>
+  <defs>
+    <style>
+      .bg{fill:#f8fafc}.title{font:700 32px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.panel{fill:white;stroke:#cbd5e1;stroke-width:2;rx:14}
+      .pk{fill:#eaf2ff;stroke:#7db0ff}.sec{fill:#fff5de;stroke:#efbd5c}.row{fill:#ecfdf3;stroke:#7bc992}.warn{fill:#fff0f0;stroke:#ef9292}
+      .head{font:700 22px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.txt{font:400 16px Arial,"Microsoft YaHei",sans-serif;fill:#344054}.small{font:400 14px Arial,"Microsoft YaHei",sans-serif;fill:#667085}
+      .arrow{stroke:#52677f;stroke-width:2.5;fill:none;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10 Z" fill="#52677f"/></marker>
+  </defs>
+  <rect class="bg" width="1280" height="760"/>
+  <text class="title" x="48" y="58">聚簇索引 vs 二级索引：回表从这里来</text>
+  <rect class="panel" x="70" y="110" width="520" height="480"/>
+  <text class="head" x="110" y="155">聚簇索引 Primary Key</text>
+  <rect class="pk" x="125" y="205" width="180" height="75" rx="10"/><text class="txt" x="164" y="248">id B+Tree</text>
+  <path class="arrow" d="M215 280 L215 345"/>
+  <rect class="row" x="105" y="345" width="420" height="135" rx="12"/>
+  <text class="txt" x="135" y="390">叶子节点保存完整行数据</text>
+  <text class="small" x="135" y="425">id = 1001</text>
+  <text class="small" x="135" y="450">name, age, status, created_at, ...</text>
+  <text class="small" x="110" y="535">查询主键：一次树搜索即可定位完整记录</text>
+  <rect class="panel" x="690" y="110" width="520" height="480"/>
+  <text class="head" x="730" y="155">二级索引 Secondary Index</text>
+  <rect class="sec" x="745" y="205" width="220" height="75" rx="10"/><text class="txt" x="775" y="248">idx_status(status)</text>
+  <path class="arrow" d="M855 280 L855 335"/>
+  <rect class="sec" x="745" y="335" width="330" height="85" rx="12"/>
+  <text class="txt" x="775" y="372">叶子节点：status + id</text>
+  <text class="small" x="775" y="398">不是完整行，只保存主键值</text>
+  <path class="arrow" d="M910 420 C835 490 720 500 590 410"/>
+  <rect class="warn" x="775" y="485" width="330" height="58" rx="12"/>
+  <text class="txt" x="815" y="521">根据 id 回到聚簇索引取整行</text>
+  <rect class="panel" x="155" y="635" width="970" height="70"/>
+  <text class="txt" x="190" y="672">覆盖索引：查询列都在二级索引里时，不需要回表；这就是 select 少列、建联合索引的重要原因</text>
+</svg>

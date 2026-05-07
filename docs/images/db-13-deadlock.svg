@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">死锁形成与治理</title>
+  <desc id="desc">两个事务交叉持有资源并等待对方导致死锁，以及治理手段</desc>
+  <defs>
+    <style>
+      .bg{fill:#fbfcfe}.title{font:700 32px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.tx{fill:#eaf2ff;stroke:#7db0ff;stroke-width:2;rx:16}
+      .res{fill:#fff6df;stroke:#efc05e;stroke-width:2;rx:14}.bad{fill:#fff0f0;stroke:#ef9292;stroke-width:2;rx:14}.ok{fill:#ecfdf3;stroke:#7bc992;stroke-width:2;rx:14}
+      .head{font:700 22px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.txt{font:400 16px Arial,"Microsoft YaHei",sans-serif;fill:#344054}.small{font:400 14px Arial,"Microsoft YaHei",sans-serif;fill:#667085}
+      .arrow{stroke:#d64545;stroke-width:3;fill:none;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10 Z" fill="#d64545"/></marker>
+  </defs>
+  <rect class="bg" width="1280" height="760"/>
+  <text class="title" x="48" y="58">死锁：本质是等待环，不是数据库“卡住了”</text>
+  <rect class="tx" x="150" y="145" width="260" height="120"/>
+  <text class="head" x="230" y="190">事务 T1</text>
+  <text class="small" x="190" y="225">已锁订单 A，等待库存 B</text>
+  <rect class="tx" x="870" y="145" width="260" height="120"/>
+  <text class="head" x="950" y="190">事务 T2</text>
+  <text class="small" x="910" y="225">已锁库存 B，等待订单 A</text>
+  <rect class="res" x="170" y="405" width="240" height="85"/>
+  <text class="txt" x="230" y="455">资源 A</text>
+  <rect class="res" x="870" y="405" width="240" height="85"/>
+  <text class="txt" x="930" y="455">资源 B</text>
+  <path class="arrow" d="M410 205 C600 120 720 120 870 205"/>
+  <path class="arrow" d="M870 450 C690 565 550 565 410 450"/>
+  <rect class="bad" x="475" y="315" width="330" height="110"/>
+  <text class="head" x="575" y="360">等待环</text>
+  <text class="txt" x="515" y="395">T1 等 T2，T2 等 T1</text>
+  <rect class="ok" x="130" y="585" width="1020" height="88"/>
+  <text class="txt" x="170" y="623">治理：统一加锁顺序；缩短事务；命中索引减少锁范围；避免大事务；失败后重试；用 SHOW ENGINE INNODB STATUS 分析</text>
+  <text class="small" x="170" y="650">面试表达：死锁不可完全避免，关键是降低概率并做好可重试设计</text>
+</svg>

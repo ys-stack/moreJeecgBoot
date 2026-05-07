@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1050" height="500" viewBox="0 0 1050 500" role="img" aria-label="阻塞队列与生产消费">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/></filter>
+    <style>.title{font:700 22px 'Microsoft YaHei',Arial,sans-serif;fill:#172033}.node{filter:url(#shadow);stroke-width:2}.txt{font:700 16px 'Microsoft YaHei',Arial,sans-serif;fill:#172033;text-anchor:middle}.small{font:600 13px 'Microsoft YaHei',Arial,sans-serif;fill:#64748b;text-anchor:middle}.line{stroke:#64748b;stroke-width:2.2;marker-end:url(#arrow)}</style>
+  </defs>
+  <rect width="1050" height="500" rx="18" fill="#f8fafc"/>
+  <text x="32" y="42" class="title">BlockingQueue：削峰、缓冲与背压</text>
+  <rect x="80" y="190" width="170" height="80" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/><text x="165" y="222" class="txt">生产者</text><text x="165" y="247" class="small">请求 / MQ / 定时任务</text>
+  <rect x="410" y="160" width="240" height="140" rx="12" fill="#fef3c7" stroke="#d97706" class="node"/>
+  <text x="530" y="195" class="txt">有界阻塞队列</text><text x="530" y="220" class="small">ArrayBlockingQueue</text><text x="530" y="243" class="small">LinkedBlockingQueue</text><text x="530" y="266" class="small">SynchronousQueue / DelayQueue</text>
+  <rect x="800" y="190" width="170" height="80" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/><text x="885" y="222" class="txt">消费者</text><text x="885" y="247" class="small">线程池工作线程</text>
+  <line x1="250" y1="230" x2="410" y2="230" class="line"/><text x="330" y="210" class="small">put/offer</text>
+  <line x1="650" y1="230" x2="800" y2="230" class="line"/><text x="725" y="210" class="small">take/poll</text>
+  <rect x="170" y="375" width="220" height="58" rx="10" fill="#ffffff" stroke="#e11d48" class="node"/><text x="280" y="410" class="txt">队列满：限流/拒绝/降级</text>
+  <rect x="440" y="375" width="190" height="58" rx="10" fill="#ffffff" stroke="#7c3aed" class="node"/><text x="535" y="410" class="txt">队列空：消费者等待</text>
+  <rect x="680" y="375" width="220" height="58" rx="10" fill="#ffffff" stroke="#16a34a" class="node"/><text x="790" y="410" class="txt">监控：队列长度/等待时间</text>
+</svg>

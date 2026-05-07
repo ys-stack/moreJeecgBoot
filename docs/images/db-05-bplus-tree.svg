@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">B+Tree 索引结构</title>
+  <desc id="desc">B+Tree 非叶子节点、叶子节点链表和范围查询路径</desc>
+  <defs>
+    <style>
+      .bg{fill:#fbfcfe}.title{font:700 32px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.node{fill:white;stroke:#91a4bd;stroke-width:2;rx:10}
+      .leaf{fill:#ecfdf3;stroke:#75c48b;stroke-width:2;rx:10}.head{font:700 20px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.txt{font:400 16px Arial,"Microsoft YaHei",sans-serif;fill:#344054}.small{font:400 14px Arial,"Microsoft YaHei",sans-serif;fill:#667085}
+      .arrow{stroke:#5f738b;stroke-width:2.3;fill:none;marker-end:url(#arrow)}.link{stroke:#2f9e44;stroke-width:2.5;fill:none;marker-end:url(#green)}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10 Z" fill="#5f738b"/></marker>
+    <marker id="green" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10 Z" fill="#2f9e44"/></marker>
+  </defs>
+  <rect class="bg" width="1280" height="760"/>
+  <text class="title" x="48" y="58">B+Tree：为什么 MySQL 索引用它</text>
+  <rect class="node" x="540" y="100" width="200" height="70"/><text class="head" x="598" y="143">[30 | 60]</text>
+  <rect class="node" x="250" y="250" width="200" height="70"/><text class="head" x="298" y="293">[10 | 20]</text>
+  <rect class="node" x="540" y="250" width="200" height="70"/><text class="head" x="588" y="293">[40 | 50]</text>
+  <rect class="node" x="830" y="250" width="200" height="70"/><text class="head" x="878" y="293">[70 | 80]</text>
+  <path class="arrow" d="M590 170 L385 250"/><path class="arrow" d="M640 170 L640 250"/><path class="arrow" d="M690 170 L895 250"/>
+  <rect class="leaf" x="115" y="430" width="150" height="90"/><text class="txt" x="145" y="468">1,5,9</text><text class="small" x="140" y="495">叶子页</text>
+  <rect class="leaf" x="305" y="430" width="150" height="90"/><text class="txt" x="333" y="468">10,18,25</text><text class="small" x="330" y="495">完整数据/主键</text>
+  <rect class="leaf" x="495" y="430" width="150" height="90"/><text class="txt" x="523" y="468">31,42,55</text><text class="small" x="520" y="495">叶子页</text>
+  <rect class="leaf" x="685" y="430" width="150" height="90"/><text class="txt" x="713" y="468">60,66,72</text><text class="small" x="710" y="495">叶子页</text>
+  <rect class="leaf" x="875" y="430" width="150" height="90"/><text class="txt" x="903" y="468">80,91,99</text><text class="small" x="900" y="495">叶子页</text>
+  <path class="arrow" d="M320 320 L220 430"/><path class="arrow" d="M380 320 L380 430"/><path class="arrow" d="M610 320 L570 430"/><path class="arrow" d="M670 320 L760 430"/><path class="arrow" d="M930 320 L950 430"/>
+  <path class="link" d="M265 475 L305 475"/><path class="link" d="M455 475 L495 475"/><path class="link" d="M645 475 L685 475"/><path class="link" d="M835 475 L875 475"/>
+  <rect class="node" x="90" y="610" width="1100" height="72"/>
+  <text class="txt" x="125" y="648">特性：非叶子节点只存键和指针，扇出高，树高低；叶子节点有序链表，范围查询天然友好</text>
+  <text class="small" x="125" y="674">面试表达：等值查询走树高，范围查询先定位起点再沿叶子链表扫描</text>
+</svg>

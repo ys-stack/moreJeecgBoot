@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">分库分表路由</title>
+  <desc id="desc">应用根据分片键计算库表位置，展示水平分片、路由、全局 ID 和跨分片问题</desc>
+  <defs>
+    <style>
+      .bg{fill:#f8fafc}.title{font:700 32px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.box{fill:white;stroke:#cbd5e1;stroke-width:2;rx:14}
+      .app{fill:#eaf2ff;stroke:#7db0ff}.route{fill:#fff6df;stroke:#efc05e}.db{fill:#ecfdf3;stroke:#7bc992}.warn{fill:#fff0f0;stroke:#ef9292}
+      .head{font:700 21px Arial,"Microsoft YaHei",sans-serif;fill:#172033}.txt{font:400 16px Arial,"Microsoft YaHei",sans-serif;fill:#344054}.small{font:400 14px Arial,"Microsoft YaHei",sans-serif;fill:#667085}.mono{font:400 15px Consolas,monospace;fill:#334155}
+      .arrow{stroke:#52677f;stroke-width:2.5;fill:none;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10 Z" fill="#52677f"/></marker>
+  </defs>
+  <rect class="bg" width="1280" height="760"/>
+  <text class="title" x="48" y="58">分库分表：核心是路由规则和代价控制</text>
+  <rect class="app" x="90" y="140" width="260" height="120" rx="16"/>
+  <text class="head" x="145" y="185">业务服务</text>
+  <text class="mono" x="130" y="220">user_id = 10241</text>
+  <path class="arrow" d="M350 200 L470 200"/>
+  <rect class="route" x="470" y="120" width="340" height="160" rx="16"/>
+  <text class="head" x="555" y="165">分片路由</text>
+  <text class="mono" x="525" y="205">db = user_id % 4</text>
+  <text class="mono" x="525" y="235">table = user_id % 16</text>
+  <path class="arrow" d="M810 200 L920 140"/><path class="arrow" d="M810 200 L920 260"/><path class="arrow" d="M810 200 L920 380"/>
+  <rect class="db" x="920" y="95" width="230" height="80" rx="14"/><text class="txt" x="975" y="142">db0.user_01</text>
+  <rect class="db" x="920" y="215" width="230" height="80" rx="14"/><text class="txt" x="975" y="262">db1.user_09</text>
+  <rect class="db" x="920" y="335" width="230" height="80" rx="14"/><text class="txt" x="975" y="382">db2.user_13</text>
+  <rect class="warn" x="110" y="500" width="1060" height="120" rx="16"/>
+  <text class="head" x="150" y="545">分片后的新问题</text>
+  <text class="txt" x="150" y="582">跨分片 Join、分页排序、全局唯一 ID、分布式事务、热点分片、扩容迁移、统计报表</text>
+  <text class="small" x="150" y="610">面试表达：先问是否真到瓶颈；优先读写分离、索引优化、归档，再考虑分片</text>
+</svg>

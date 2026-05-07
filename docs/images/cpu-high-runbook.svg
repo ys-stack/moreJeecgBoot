@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="620" viewBox="0 0 980 620" role="img" aria-label="CPU 飙高排查流程">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L8,3 z" fill="#607086" />
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+  <rect width="100%" height="100%" rx="18" fill="#f8fafc"/>
+  <text x="32" y="42" font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="22" font-weight="700" fill="#172033">CPU 飙高排查流程</text>
+  
+  <rect x="380" y="70" width="220" height="56" rx="12" fill="#ffe4e6" stroke="#e11d48" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="490" y="104">CPU 飙高</tspan></text>
+
+  <rect x="380" y="155" width="240" height="54" rx="12" fill="#ffffff" stroke="#2563eb" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="500" y="188">top 查看高 CPU 进程</tspan></text>
+
+  <rect x="360" y="235" width="240" height="54" rx="12" fill="#ffffff" stroke="#2563eb" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="480" y="268">top -Hp pid 查看高 CPU 线程</tspan></text>
+
+  <rect x="380" y="315" width="240" height="54" rx="12" fill="#ffffff" stroke="#2563eb" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="500" y="348">线程 id 转十六进制</tspan></text>
+
+  <rect x="360" y="395" width="240" height="54" rx="12" fill="#ffffff" stroke="#2563eb" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="480" y="428">jstack / jcmd 查看线程栈</tspan></text>
+
+  <rect x="370" y="475" width="240" height="54" rx="12" fill="#ffffff" stroke="#2563eb" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="490" y="508">搜索 nid，定位具体代码</tspan></text>
+<line x1="490" y1="126" x2="490" y2="155" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/>
+<line x1="490" y1="209" x2="490" y2="235" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/>
+<line x1="490" y1="289" x2="490" y2="315" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/>
+<line x1="490" y1="369" x2="490" y2="395" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/>
+<line x1="490" y1="449" x2="490" y2="475" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/>
+
+  <polygon points="775,390 870,435 775,480 680,435" fill="#fef3c7" stroke="#d97706" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="14" font-weight="700" fill="#172033" text-anchor="middle"><tspan x="775" y="441">线程状态</tspan></text>
+<line x1="610" y1="422" x2="680" y2="435" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/>
+
+  <rect x="60" y="520" width="260" height="58" rx="12" fill="#fef3c7" stroke="#d97706" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="190" y="545">RUNNABLE</tspan><tspan x="190" y="565">死循环 / 复杂计算 / 频繁 GC</tspan></text>
+
+  <rect x="360" y="520" width="210" height="58" rx="12" fill="#ffe4e6" stroke="#e11d48" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="465" y="545">BLOCKED</tspan><tspan x="465" y="565">锁竞争严重</tspan></text>
+
+  <rect x="620" y="520" width="300" height="58" rx="12" fill="#dcfce7" stroke="#16a34a" stroke-width="2" filter="url(#shadow)"/>
+  <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" font-size="15" font-weight="600" fill="#172033" text-anchor="middle"><tspan x="770" y="545">WAITING / TIMED_WAITING</tspan><tspan x="770" y="565">通常继续看其他高 CPU 线程</tspan></text>
+<line x1="705" y1="480" x2="190" y2="520" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/>
+<line x1="775" y1="480" x2="465" y2="520" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/>
+<line x1="820" y1="480" x2="770" y2="520" stroke="#607086" stroke-width="2.2" marker-end="url(#arrow)"/>
+</svg>
