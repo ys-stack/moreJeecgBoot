@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="460" viewBox="0 0 1040 460" role="img" aria-label="MyBatis 插件拦截点">
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/></filter><style>.title{font:700 22px 'Microsoft YaHei',Arial,sans-serif;fill:#172033}.node{filter:url(#shadow);stroke-width:2}.txt{font:700 15px 'Microsoft YaHei',Arial,sans-serif;fill:#172033;text-anchor:middle}.small{font:600 12px 'Microsoft YaHei',Arial,sans-serif;fill:#64748b;text-anchor:middle}.line{stroke:#64748b;stroke-width:2.2;marker-end:url(#arrow)}</style></defs>
+  <rect width="1040" height="460" rx="18" fill="#f8fafc"/>
+  <text x="32" y="42" class="title">MyBatis 插件机制：拦截四大对象</text>
+  <rect x="80" y="190" width="180" height="70" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/><text x="170" y="218" class="txt">Executor</text><text x="170" y="240" class="small">查询/更新/缓存</text>
+  <rect x="315" y="190" width="180" height="70" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/><text x="405" y="218" class="txt">StatementHandler</text><text x="405" y="240" class="small">SQL 准备/分页</text>
+  <rect x="550" y="190" width="180" height="70" rx="12" fill="#fef3c7" stroke="#d97706" class="node"/><text x="640" y="218" class="txt">ParameterHandler</text><text x="640" y="240" class="small">参数设置</text>
+  <rect x="785" y="190" width="180" height="70" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/><text x="875" y="218" class="txt">ResultSetHandler</text><text x="875" y="240" class="small">结果映射</text>
+  <rect x="410" y="340" width="230" height="58" rx="10" fill="#ffffff" stroke="#e11d48" class="node"/><text x="525" y="374" class="txt">Plugin 动态代理包裹目标对象</text>
+  <line x1="170" y1="260" x2="470" y2="340" class="line"/><line x1="405" y1="260" x2="505" y2="340" class="line"/><line x1="640" y1="260" x2="545" y2="340" class="line"/><line x1="875" y1="260" x2="580" y2="340" class="line"/>
+  <text x="520" y="100" class="small">分页插件、审计插件、SQL 改写、慢 SQL 统计常基于插件机制；插件顺序会影响最终行为。</text>
+</svg>

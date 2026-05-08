@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="420" viewBox="0 0 1180 420" role="img" aria-label="Spring refresh 启动流程">
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/></filter><style>.title{font:700 22px 'Microsoft YaHei',Arial,sans-serif;fill:#172033}.node{filter:url(#shadow);stroke-width:2}.txt{font:700 14px 'Microsoft YaHei',Arial,sans-serif;fill:#172033;text-anchor:middle}.small{font:600 12px 'Microsoft YaHei',Arial,sans-serif;fill:#64748b;text-anchor:middle}.line{stroke:#64748b;stroke-width:2.2;marker-end:url(#arrow)}</style></defs>
+  <rect width="1180" height="420" rx="18" fill="#f8fafc"/>
+  <text x="32" y="42" class="title">Spring 容器启动核心流程：refresh()</text>
+  <rect x="35" y="155" width="135" height="70" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/><text x="102" y="185" class="txt">准备环境</text><text x="102" y="207" class="small">Environment</text>
+  <rect x="215" y="155" width="145" height="70" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/><text x="287" y="185" class="txt">加载 BeanDefinition</text><text x="287" y="207" class="small">扫描/解析配置</text>
+  <rect x="405" y="155" width="145" height="70" rx="12" fill="#fef3c7" stroke="#d97706" class="node"/><text x="477" y="185" class="txt">调用工厂后处理器</text><text x="477" y="207" class="small">BFPP / BDRPP</text>
+  <rect x="595" y="155" width="145" height="70" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/><text x="667" y="185" class="txt">注册 BPP</text><text x="667" y="207" class="small">代理扩展点</text>
+  <rect x="785" y="155" width="145" height="70" rx="12" fill="#ffe4e6" stroke="#e11d48" class="node"/><text x="857" y="185" class="txt">实例化单例 Bean</text><text x="857" y="207" class="small">依赖注入/初始化</text>
+  <rect x="975" y="155" width="145" height="70" rx="12" fill="#e0f2fe" stroke="#0284c7" class="node"/><text x="1047" y="185" class="txt">发布事件</text><text x="1047" y="207" class="small">容器可用</text>
+  <line x1="170" y1="190" x2="215" y2="190" class="line"/><line x1="360" y1="190" x2="405" y2="190" class="line"/><line x1="550" y1="190" x2="595" y2="190" class="line"/><line x1="740" y1="190" x2="785" y2="190" class="line"/><line x1="930" y1="190" x2="975" y2="190" class="line"/>
+  <text x="590" y="320" class="small">面试抓主线：BeanDefinition 是 Bean 的元数据；BeanFactoryPostProcessor 改元数据；BeanPostProcessor 参与 Bean 创建，AOP 就靠它接入。</text>
+</svg>

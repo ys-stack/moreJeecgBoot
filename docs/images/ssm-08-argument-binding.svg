@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="500" viewBox="0 0 1100 500" role="img" aria-label="Spring MVC 参数绑定与返回值处理">
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/></filter><style>.title{font:700 22px 'Microsoft YaHei',Arial,sans-serif;fill:#172033}.node{filter:url(#shadow);stroke-width:2}.txt{font:700 15px 'Microsoft YaHei',Arial,sans-serif;fill:#172033;text-anchor:middle}.small{font:600 12px 'Microsoft YaHei',Arial,sans-serif;fill:#64748b;text-anchor:middle}.line{stroke:#64748b;stroke-width:2.2;marker-end:url(#arrow)}</style></defs>
+  <rect width="1100" height="500" rx="18" fill="#f8fafc"/>
+  <text x="32" y="42" class="title">参数绑定与响应输出</text>
+  <rect x="80" y="140" width="180" height="64" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/><text x="170" y="168" class="txt">请求参数</text><text x="170" y="189" class="small">query/form/path/body</text>
+  <rect x="360" y="140" width="200" height="64" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/><text x="460" y="168" class="txt">ArgumentResolver</text><text x="460" y="189" class="small">@RequestParam/@RequestBody</text>
+  <rect x="660" y="140" width="180" height="64" rx="12" fill="#fef3c7" stroke="#d97706" class="node"/><text x="750" y="168" class="txt">Controller 方法</text><text x="750" y="189" class="small">业务入口</text>
+  <line x1="260" y1="172" x2="360" y2="172" class="line"/><line x1="560" y1="172" x2="660" y2="172" class="line"/>
+  <rect x="220" y="315" width="210" height="64" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/><text x="325" y="343" class="txt">ReturnValueHandler</text><text x="325" y="364" class="small">@ResponseBody / ModelAndView</text>
+  <rect x="530" y="315" width="220" height="64" rx="12" fill="#ffe4e6" stroke="#e11d48" class="node"/><text x="640" y="343" class="txt">HttpMessageConverter</text><text x="640" y="364" class="small">对象 JSON 序列化</text>
+  <rect x="850" y="315" width="160" height="64" rx="12" fill="#e0f2fe" stroke="#0284c7" class="node"/><text x="930" y="352" class="txt">HTTP 响应</text>
+  <line x1="750" y1="204" x2="325" y2="315" class="line"/><line x1="430" y1="347" x2="530" y2="347" class="line"/><line x1="750" y1="347" x2="850" y2="347" class="line"/>
+  <text x="550" y="445" class="small">常见问题：@RequestBody 只能读请求体；GET query 参数不是 body；日期格式、枚举转换、JSON 字段名都走转换/序列化机制。</text>
+</svg>
