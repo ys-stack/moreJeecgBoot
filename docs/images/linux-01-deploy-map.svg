@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="540" viewBox="0 0 1180 540" role="img" aria-label="Linux 部署能力地图">
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/></filter><style>.title{font:700 24px 'Microsoft YaHei',Arial;fill:#172033}.txt{font:700 15px 'Microsoft YaHei',Arial;fill:#172033;text-anchor:middle}.small{font:600 12px 'Microsoft YaHei',Arial;fill:#64748b;text-anchor:middle}.node{filter:url(#shadow);stroke-width:2}.line{stroke:#64748b;stroke-width:2.2;marker-end:url(#arrow)}</style></defs>
+  <rect width="1180" height="540" rx="18" fill="#f8fafc"/>
+  <text x="32" y="44" class="title">Linux 部署能力地图：会部署，也要会排查</text>
+  <rect x="485" y="80" width="210" height="66" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/><text x="590" y="107" class="txt">Linux 部署能力</text><text x="590" y="128" class="small">系统 / 进程 / 网络 / 磁盘 / 日志</text>
+  <rect x="70" y="230" width="170" height="66" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/><text x="155" y="257" class="txt">文件与权限</text><text x="155" y="278" class="small">chmod / chown / tar</text>
+  <rect x="285" y="230" width="170" height="66" rx="12" fill="#fef3c7" stroke="#d97706" class="node"/><text x="370" y="257" class="txt">进程与服务</text><text x="370" y="278" class="small">ps / systemd / journalctl</text>
+  <rect x="505" y="230" width="170" height="66" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/><text x="590" y="257" class="txt">网络排查</text><text x="590" y="278" class="small">ss / curl / tcpdump</text>
+  <rect x="725" y="230" width="170" height="66" rx="12" fill="#e0f2fe" stroke="#0284c7" class="node"/><text x="810" y="257" class="txt">磁盘内存</text><text x="810" y="278" class="small">df / du / free / top</text>
+  <rect x="940" y="230" width="170" height="66" rx="12" fill="#fee2e2" stroke="#dc2626" class="node"/><text x="1025" y="257" class="txt">安全与部署</text><text x="1025" y="278" class="small">ssh / 防火墙 / 用户</text>
+  <rect x="250" y="400" width="210" height="62" rx="12" fill="#ffffff" stroke="#16a34a" class="node"/><text x="355" y="426" class="txt">Java 服务部署</text><text x="355" y="446" class="small">jar / env / restart / logs</text>
+  <rect x="720" y="400" width="210" height="62" rx="12" fill="#ffffff" stroke="#dc2626" class="node"/><text x="825" y="426" class="txt">线上故障定位</text><text x="825" y="446" class="small">CPU / IO / 网络 / 端口</text>
+  <line x1="590" y1="146" x2="155" y2="230" class="line"/><line x1="590" y1="146" x2="370" y2="230" class="line"/><line x1="590" y1="146" x2="590" y2="230" class="line"/><line x1="590" y1="146" x2="810" y2="230" class="line"/><line x1="590" y1="146" x2="1025" y2="230" class="line"/><line x1="370" y1="296" x2="355" y2="400" class="line"/><line x1="810" y1="296" x2="825" y2="400" class="line"/>
+</svg>

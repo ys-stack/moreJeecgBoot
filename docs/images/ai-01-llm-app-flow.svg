@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="520" viewBox="0 0 1180 520" role="img" aria-label="AI 应用调用链路">
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/></filter><style>.title{font:700 24px 'Microsoft YaHei',Arial;fill:#172033}.txt{font:700 15px 'Microsoft YaHei',Arial;fill:#172033;text-anchor:middle}.small{font:600 12px 'Microsoft YaHei',Arial;fill:#64748b;text-anchor:middle}.node{filter:url(#shadow);stroke-width:2}.line{stroke:#64748b;stroke-width:2.2;marker-end:url(#arrow)}</style></defs>
+  <rect width="1180" height="520" rx="18" fill="#f8fafc"/>
+  <text x="32" y="44" class="title">AI 应用：从用户问题到模型回答的工程链路</text>
+  <rect x="60" y="205" width="145" height="66" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/><text x="132" y="232" class="txt">用户输入</text><text x="132" y="253" class="small">问题 / 指令 / 上下文</text>
+  <rect x="260" y="205" width="155" height="66" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/><text x="337" y="232" class="txt">应用服务</text><text x="337" y="253" class="small">鉴权 / 参数 / 日志</text>
+  <rect x="470" y="110" width="160" height="62" rx="12" fill="#fef3c7" stroke="#d97706" class="node"/><text x="550" y="136" class="txt">Prompt</text><text x="550" y="156" class="small">系统指令 / 用户输入</text>
+  <rect x="470" y="205" width="160" height="66" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/><text x="550" y="232" class="txt">RAG 检索</text><text x="550" y="253" class="small">向量库 / 业务知识</text>
+  <rect x="470" y="305" width="160" height="62" rx="12" fill="#e0f2fe" stroke="#0284c7" class="node"/><text x="550" y="331" class="txt">工具调用</text><text x="550" y="351" class="small">查订单 / 调接口</text>
+  <rect x="705" y="205" width="160" height="66" rx="12" fill="#fee2e2" stroke="#dc2626" class="node"/><text x="785" y="232" class="txt">大模型</text><text x="785" y="253" class="small">推理 / 生成</text>
+  <rect x="930" y="205" width="170" height="66" rx="12" fill="#ffffff" stroke="#16a34a" class="node"/><text x="1015" y="232" class="txt">结果处理</text><text x="1015" y="253" class="small">格式化 / 审核 / 返回</text>
+  <line x1="205" y1="238" x2="260" y2="238" class="line"/><line x1="415" y1="238" x2="470" y2="238" class="line"/><line x1="630" y1="238" x2="705" y2="238" class="line"/><line x1="865" y1="238" x2="930" y2="238" class="line"/>
+  <line x1="415" y1="238" x2="470" y2="141" class="line"/><line x1="415" y1="238" x2="470" y2="336" class="line"/><line x1="630" y1="141" x2="705" y2="205" class="line"/><line x1="630" y1="336" x2="705" y2="271" class="line"/>
+  <text x="590" y="455" class="small">高频理解：模型不是应用本身，AI 应用的关键在上下文构造、检索、工具、权限、成本、稳定性和可观测性。</text>
+</svg>

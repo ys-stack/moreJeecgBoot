@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="520" viewBox="0 0 1180 520" role="img" aria-label="Docker 镜像容器运行模型">
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/></filter><style>.title{font:700 24px 'Microsoft YaHei',Arial;fill:#172033}.txt{font:700 15px 'Microsoft YaHei',Arial;fill:#172033;text-anchor:middle}.small{font:600 12px 'Microsoft YaHei',Arial;fill:#64748b;text-anchor:middle}.node{filter:url(#shadow);stroke-width:2}.line{stroke:#64748b;stroke-width:2.2;marker-end:url(#arrow)}</style></defs>
+  <rect width="1180" height="520" rx="18" fill="#f8fafc"/>
+  <text x="32" y="44" class="title">Docker：镜像是模板，容器是运行实例</text>
+  <rect x="70" y="210" width="150" height="66" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/><text x="145" y="237" class="txt">Dockerfile</text><text x="145" y="258" class="small">构建说明书</text>
+  <rect x="300" y="210" width="150" height="66" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/><text x="375" y="237" class="txt">Image</text><text x="375" y="258" class="small">分层只读模板</text>
+  <rect x="530" y="210" width="150" height="66" rx="12" fill="#fef3c7" stroke="#d97706" class="node"/><text x="605" y="237" class="txt">Container</text><text x="605" y="258" class="small">运行实例</text>
+  <rect x="760" y="120" width="150" height="66" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/><text x="835" y="147" class="txt">Network</text><text x="835" y="168" class="small">端口 / DNS / bridge</text>
+  <rect x="760" y="300" width="150" height="66" rx="12" fill="#e0f2fe" stroke="#0284c7" class="node"/><text x="835" y="327" class="txt">Volume</text><text x="835" y="348" class="small">数据持久化</text>
+  <rect x="970" y="210" width="145" height="66" rx="12" fill="#fee2e2" stroke="#dc2626" class="node"/><text x="1042" y="237" class="txt">Host Kernel</text><text x="1042" y="258" class="small">namespace / cgroups</text>
+  <line x1="220" y1="243" x2="300" y2="243" class="line"/><line x1="450" y1="243" x2="530" y2="243" class="line"/><line x1="680" y1="243" x2="760" y2="153" class="line"/><line x1="680" y1="243" x2="760" y2="333" class="line"/><line x1="910" y1="153" x2="970" y2="243" class="line"/><line x1="910" y1="333" x2="970" y2="243" class="line"/>
+  <text x="590" y="445" class="small">高频理解：容器不是虚拟机。它共享宿主机内核，用 namespace 做隔离，用 cgroups 做资源限制，用镜像分层交付运行环境。</text>
+</svg>
