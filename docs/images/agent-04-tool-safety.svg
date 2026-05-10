@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1220" height="600" viewBox="0 0 1220 600" role="img" aria-label="Agent 工具安全边界">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#64748b"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .title{font:700 24px 'Microsoft YaHei',Arial;fill:#172033}
+      .txt{font:700 15px 'Microsoft YaHei',Arial;fill:#172033;text-anchor:middle}
+      .small{font:600 12px 'Microsoft YaHei',Arial;fill:#64748b;text-anchor:middle}
+      .note{font:600 13px 'Microsoft YaHei',Arial;fill:#475569}
+      .node{filter:url(#shadow);stroke-width:2}
+      .line{stroke:#64748b;stroke-width:2.2;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1220" height="600" rx="18" fill="#f8fafc"/>
+  <text x="34" y="46" class="title">Agent 工具安全边界：模型输出必须穿过服务端闸门</text>
+
+  <rect x="55" y="255" width="145" height="66" rx="12" fill="#fee2e2" stroke="#dc2626" class="node"/>
+  <text x="127" y="282" class="txt">模型决策</text>
+  <text x="127" y="303" class="small">想调用工具</text>
+
+  <rect x="255" y="255" width="145" height="66" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/>
+  <text x="327" y="282" class="txt">工具白名单</text>
+  <text x="327" y="303" class="small">只允许注册工具</text>
+
+  <rect x="455" y="255" width="145" height="66" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/>
+  <text x="527" y="282" class="txt">参数校验</text>
+  <text x="527" y="303" class="small">格式 / 必填 / 枚举</text>
+
+  <rect x="655" y="255" width="145" height="66" rx="12" fill="#fef3c7" stroke="#d97706" class="node"/>
+  <text x="727" y="282" class="txt">权限校验</text>
+  <text x="727" y="303" class="small">用户 / 租户 / 数据</text>
+
+  <rect x="855" y="255" width="145" height="66" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/>
+  <text x="927" y="282" class="txt">风险判断</text>
+  <text x="927" y="303" class="small">只读 / 写 / 高危</text>
+
+  <rect x="1055" y="255" width="120" height="66" rx="12" fill="#e0f2fe" stroke="#0284c7" class="node"/>
+  <text x="1115" y="282" class="txt">执行工具</text>
+  <text x="1115" y="303" class="small">真实业务系统</text>
+
+  <path d="M200 288 L255 288" class="line"/>
+  <path d="M400 288 L455 288" class="line"/>
+  <path d="M600 288 L655 288" class="line"/>
+  <path d="M800 288 L855 288" class="line"/>
+  <path d="M1000 288 L1055 288" class="line"/>
+
+  <rect x="245" y="110" width="220" height="70" rx="14" fill="#ffffff" stroke="#cbd5e1" class="node"/>
+  <text x="355" y="138" class="txt">拒绝非法工具</text>
+  <text x="355" y="160" class="small">unknown_tool / do_anything</text>
+  <path d="M327 255 L355 180" class="line"/>
+
+  <rect x="510" y="110" width="220" height="70" rx="14" fill="#ffffff" stroke="#cbd5e1" class="node"/>
+  <text x="620" y="138" class="txt">拒绝越权访问</text>
+  <text x="620" y="160" class="small">别人订单 / 其他租户</text>
+  <path d="M727 255 L620 180" class="line"/>
+
+  <rect x="775" y="110" width="220" height="70" rx="14" fill="#ffffff" stroke="#cbd5e1" class="node"/>
+  <text x="885" y="138" class="txt">高风险暂停</text>
+  <text x="885" y="160" class="small">退款 / 删除 / 改权限</text>
+  <path d="M927 255 L885 180" class="line"/>
+
+  <rect x="385" y="415" width="450" height="78" rx="16" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="610" y="448" class="txt">审计日志必须记录每一步</text>
+  <text x="610" y="471" class="small">模型决策 / 工具入参 / 权限结果 / 工具返回 / 停止原因</text>
+
+  <text x="74" y="555" class="note">核心原则：Agent 可以“想调用”，但是否能调用、怎么调用、调用后是否生效，必须由 Java 服务端决定。</text>
+</svg>

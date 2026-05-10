@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="620" viewBox="0 0 1180 620" role="img" aria-label="向量检索基本流程">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#64748b"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .title{font:700 24px 'Microsoft YaHei',Arial;fill:#172033}
+      .section{font:700 17px 'Microsoft YaHei',Arial;fill:#0f172a}
+      .txt{font:700 15px 'Microsoft YaHei',Arial;fill:#172033;text-anchor:middle}
+      .small{font:600 12px 'Microsoft YaHei',Arial;fill:#64748b;text-anchor:middle}
+      .note{font:600 13px 'Microsoft YaHei',Arial;fill:#475569}
+      .node{filter:url(#shadow);stroke-width:2}
+      .line{stroke:#64748b;stroke-width:2.2;fill:none;marker-end:url(#arrow)}
+      .dash{stroke:#94a3b8;stroke-width:2;stroke-dasharray:8 6;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1180" height="620" rx="18" fill="#f8fafc"/>
+  <text x="34" y="46" class="title">Embedding 与向量检索：把“字面搜索”升级成“语义搜索”</text>
+
+  <text x="60" y="94" class="section">离线写入</text>
+  <rect x="60" y="120" width="150" height="64" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/>
+  <text x="135" y="146" class="txt">文档 / FAQ</text>
+  <text x="135" y="167" class="small">知识来源</text>
+
+  <rect x="270" y="120" width="150" height="64" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/>
+  <text x="345" y="146" class="txt">清洗文本</text>
+  <text x="345" y="167" class="small">去噪 / 去格式</text>
+
+  <rect x="480" y="120" width="150" height="64" rx="12" fill="#fef3c7" stroke="#d97706" class="node"/>
+  <text x="555" y="146" class="txt">切分 Chunk</text>
+  <text x="555" y="167" class="small">段落 / 标题 / overlap</text>
+
+  <rect x="690" y="120" width="165" height="64" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/>
+  <text x="772" y="146" class="txt">生成 Embedding</text>
+  <text x="772" y="167" class="small">文本变向量</text>
+
+  <rect x="925" y="120" width="165" height="64" rx="12" fill="#e0f2fe" stroke="#0284c7" class="node"/>
+  <text x="1007" y="146" class="txt">写入向量库</text>
+  <text x="1007" y="167" class="small">向量 + 元数据</text>
+
+  <path d="M210 152 L270 152" class="line"/>
+  <path d="M420 152 L480 152" class="line"/>
+  <path d="M630 152 L690 152" class="line"/>
+  <path d="M855 152 L925 152" class="line"/>
+
+  <text x="60" y="304" class="section">在线查询</text>
+  <rect x="60" y="330" width="150" height="64" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/>
+  <text x="135" y="356" class="txt">用户问题</text>
+  <text x="135" y="377" class="small">自然语言</text>
+
+  <rect x="270" y="330" width="150" height="64" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/>
+  <text x="345" y="356" class="txt">问题向量化</text>
+  <text x="345" y="377" class="small">同一个 Embedding 模型</text>
+
+  <rect x="480" y="330" width="165" height="64" rx="12" fill="#e0f2fe" stroke="#0284c7" class="node"/>
+  <text x="562" y="356" class="txt">TopK 检索</text>
+  <text x="562" y="377" class="small">找语义相近 Chunk</text>
+
+  <rect x="705" y="330" width="150" height="64" rx="12" fill="#fee2e2" stroke="#dc2626" class="node"/>
+  <text x="780" y="356" class="txt">相关资料</text>
+  <text x="780" y="377" class="small">Chunk + 来源</text>
+
+  <rect x="915" y="330" width="150" height="64" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/>
+  <text x="990" y="356" class="txt">拼 Prompt</text>
+  <text x="990" y="377" class="small">交给模型回答</text>
+
+  <path d="M210 362 L270 362" class="line"/>
+  <path d="M420 362 L480 362" class="line"/>
+  <path d="M645 362 L705 362" class="line"/>
+  <path d="M855 362 L915 362" class="line"/>
+  <path d="M1007 184 C1007 246, 585 245, 562 330" class="dash"/>
+
+  <rect x="110" y="475" width="960" height="70" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="135" y="506" class="note">核心理解：Embedding 不是回答问题，它只负责把文本变成语义坐标；真正回答仍然由大模型基于检索到的资料生成。</text>
+  <text x="135" y="530" class="note">工程重点：Chunk 切分、权限过滤、TopK、重排和引用来源，往往比“换一个更贵模型”更影响 RAG 效果。</text>
+</svg>

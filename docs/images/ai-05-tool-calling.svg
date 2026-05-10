@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620" role="img" aria-label="工具调用时序图">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#64748b"/>
+    </marker>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#2563eb"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .title{font:700 24px 'Microsoft YaHei',Arial;fill:#172033}
+      .head{font:700 15px 'Microsoft YaHei',Arial;fill:#172033;text-anchor:middle}
+      .label{font:600 13px 'Microsoft YaHei',Arial;fill:#334155}
+      .small{font:600 12px 'Microsoft YaHei',Arial;fill:#64748b}
+      .box{filter:url(#shadow);stroke-width:2}
+      .life{stroke:#cbd5e1;stroke-width:2;stroke-dasharray:7 7}
+      .line{stroke:#64748b;stroke-width:2.2;fill:none;marker-end:url(#arrow)}
+      .main{stroke:#2563eb;stroke-width:2.4;fill:none;marker-end:url(#arrow-blue)}
+    </style>
+  </defs>
+  <rect width="1120" height="620" rx="18" fill="#f8fafc"/>
+  <text x="34" y="46" class="title">工具调用：模型做决策，服务端做校验和执行</text>
+
+  <rect x="70" y="85" width="150" height="55" rx="12" fill="#dbeafe" stroke="#2563eb" class="box"/>
+  <text x="145" y="118" class="head">用户</text>
+  <rect x="325" y="85" width="170" height="55" rx="12" fill="#dcfce7" stroke="#16a34a" class="box"/>
+  <text x="410" y="118" class="head">AI 应用服务</text>
+  <rect x="625" y="85" width="150" height="55" rx="12" fill="#fee2e2" stroke="#dc2626" class="box"/>
+  <text x="700" y="118" class="head">大模型</text>
+  <rect x="900" y="85" width="150" height="55" rx="12" fill="#e0f2fe" stroke="#0284c7" class="box"/>
+  <text x="975" y="118" class="head">业务工具</text>
+
+  <path d="M145 140 L145 545" class="life"/>
+  <path d="M410 140 L410 545" class="life"/>
+  <path d="M700 140 L700 545" class="life"/>
+  <path d="M975 140 L975 545" class="life"/>
+
+  <path d="M145 190 L410 190" class="main"/>
+  <text x="190" y="178" class="label">1. 用户提问：订单为什么没发货？</text>
+
+  <path d="M410 245 L700 245" class="main"/>
+  <text x="450" y="233" class="label">2. 问题 + 可用工具说明</text>
+
+  <path d="M700 300 L410 300" class="line"/>
+  <text x="455" y="288" class="label">3. 模型返回：query_order(orderNo)</text>
+
+  <path d="M410 352 C345 352,345 405,410 405" class="line"/>
+  <text x="430" y="360" class="label">4. 服务端校验工具名、参数、权限、风险等级</text>
+
+  <path d="M410 455 L975 455" class="main"/>
+  <text x="450" y="443" class="label">5. 执行业务工具：查询订单</text>
+
+  <path d="M975 505 L410 505" class="line"/>
+  <text x="450" y="493" class="label">6. 返回结构化工具结果</text>
+
+  <path d="M410 545 L700 545" class="main"/>
+  <text x="450" y="533" class="label">7. 工具结果交给模型生成最终回复</text>
+
+  <path d="M700 580 L410 580" class="line"/>
+  <path d="M410 580 L145 580" class="line"/>
+  <text x="455" y="568" class="label">8. 返回客服回答，不绕过业务系统</text>
+
+  <rect x="85" y="575" width="950" height="1" fill="transparent"/>
+  <text x="80" y="597" class="small">安全原则：模型只能提出“想调用什么”，真正执行前必须由 Java 服务做白名单、参数、权限和审计。</text>
+</svg>

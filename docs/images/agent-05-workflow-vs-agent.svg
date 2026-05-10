@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="600" viewBox="0 0 1180 600" role="img" aria-label="Agent 与工作流取舍">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#64748b"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .title{font:700 24px 'Microsoft YaHei',Arial;fill:#172033}
+      .head{font:700 18px 'Microsoft YaHei',Arial;fill:#172033;text-anchor:middle}
+      .txt{font:700 15px 'Microsoft YaHei',Arial;fill:#172033;text-anchor:middle}
+      .small{font:600 12px 'Microsoft YaHei',Arial;fill:#64748b;text-anchor:middle}
+      .note{font:600 13px 'Microsoft YaHei',Arial;fill:#475569}
+      .node{filter:url(#shadow);stroke-width:2}
+      .line{stroke:#64748b;stroke-width:2.2;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1180" height="600" rx="18" fill="#f8fafc"/>
+  <text x="34" y="46" class="title">Agent 与工作流取舍：越高风险，越要让流程接管</text>
+
+  <rect x="70" y="105" width="460" height="355" rx="20" fill="#eef6ff" stroke="#bfdbfe"/>
+  <text x="300" y="145" class="head">固定工作流优先</text>
+
+  <rect x="120" y="190" width="150" height="58" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/>
+  <text x="195" y="214" class="txt">流程固定</text>
+  <text x="195" y="235" class="small">审批 / 支付 / 权限</text>
+
+  <rect x="330" y="190" width="150" height="58" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/>
+  <text x="405" y="214" class="txt">强合规</text>
+  <text x="405" y="235" class="small">必须可解释</text>
+
+  <rect x="120" y="310" width="150" height="58" rx="12" fill="#fef3c7" stroke="#d97706" class="node"/>
+  <text x="195" y="334" class="txt">高风险写</text>
+  <text x="195" y="355" class="small">退款 / 删除</text>
+
+  <rect x="330" y="310" width="150" height="58" rx="12" fill="#ffffff" stroke="#64748b" class="node"/>
+  <text x="405" y="334" class="txt">模型职责</text>
+  <text x="405" y="355" class="small">理解 / 填参 / 总结</text>
+
+  <rect x="650" y="105" width="460" height="355" rx="20" fill="#f7fee7" stroke="#bbf7d0"/>
+  <text x="880" y="145" class="head">Agent 可以发挥</text>
+
+  <rect x="700" y="190" width="150" height="58" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/>
+  <text x="775" y="214" class="txt">目标开放</text>
+  <text x="775" y="235" class="small">步骤不固定</text>
+
+  <rect x="910" y="190" width="150" height="58" rx="12" fill="#e0f2fe" stroke="#0284c7" class="node"/>
+  <text x="985" y="214" class="txt">只读查询</text>
+  <text x="985" y="235" class="small">订单 / 文档 / 日志</text>
+
+  <rect x="700" y="310" width="150" height="58" rx="12" fill="#fee2e2" stroke="#dc2626" class="node"/>
+  <text x="775" y="334" class="txt">多源分析</text>
+  <text x="775" y="355" class="small">聚合和总结</text>
+
+  <rect x="910" y="310" width="150" height="58" rx="12" fill="#ffffff" stroke="#64748b" class="node"/>
+  <text x="985" y="334" class="txt">低风险写</text>
+  <text x="985" y="355" class="small">草稿 / 工单</text>
+
+  <path d="M530 282 L650 282" class="line"/>
+  <text x="590" y="270" class="small">混合模式最常见</text>
+
+  <rect x="230" y="505" width="720" height="50" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="590" y="536" class="note" text-anchor="middle">实战建议：工作流负责确定性和合规，Agent 负责自然语言理解、动态查询和结果总结。</text>
+</svg>

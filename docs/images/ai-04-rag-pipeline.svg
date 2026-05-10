@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1220" height="640" viewBox="0 0 1220 640" role="img" aria-label="RAG 离线建库和在线问答链路">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#64748b"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .title{font:700 24px 'Microsoft YaHei',Arial;fill:#172033}
+      .lane{font:700 18px 'Microsoft YaHei',Arial;fill:#172033}
+      .txt{font:700 15px 'Microsoft YaHei',Arial;fill:#172033;text-anchor:middle}
+      .small{font:600 12px 'Microsoft YaHei',Arial;fill:#64748b;text-anchor:middle}
+      .note{font:600 13px 'Microsoft YaHei',Arial;fill:#475569}
+      .node{filter:url(#shadow);stroke-width:2}
+      .line{stroke:#64748b;stroke-width:2.2;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1220" height="640" rx="18" fill="#f8fafc"/>
+  <text x="34" y="46" class="title">RAG：离线建库 + 在线问答，两条链路配合降低幻觉</text>
+
+  <rect x="45" y="82" width="1130" height="215" rx="18" fill="#eef6ff" stroke="#bfdbfe"/>
+  <text x="70" y="116" class="lane">离线建库：把企业资料变成可检索的知识资产</text>
+
+  <rect x="80" y="155" width="135" height="62" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/>
+  <text x="147" y="181" class="txt">上传文档</text>
+  <text x="147" y="202" class="small">PDF / MD / Word</text>
+
+  <rect x="265" y="155" width="135" height="62" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/>
+  <text x="332" y="181" class="txt">解析内容</text>
+  <text x="332" y="202" class="small">抽取正文</text>
+
+  <rect x="450" y="155" width="135" height="62" rx="12" fill="#fef3c7" stroke="#d97706" class="node"/>
+  <text x="517" y="181" class="txt">清洗文本</text>
+  <text x="517" y="202" class="small">去噪 / 去广告</text>
+
+  <rect x="635" y="155" width="145" height="62" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/>
+  <text x="707" y="181" class="txt">切分 Chunk</text>
+  <text x="707" y="202" class="small">标题 / 段落</text>
+
+  <rect x="830" y="155" width="145" height="62" rx="12" fill="#fee2e2" stroke="#dc2626" class="node"/>
+  <text x="902" y="181" class="txt">向量化</text>
+  <text x="902" y="202" class="small">Embedding</text>
+
+  <rect x="1025" y="155" width="115" height="62" rx="12" fill="#e0f2fe" stroke="#0284c7" class="node"/>
+  <text x="1082" y="181" class="txt">向量库</text>
+  <text x="1082" y="202" class="small">含元数据</text>
+
+  <path d="M215 186 L265 186" class="line"/>
+  <path d="M400 186 L450 186" class="line"/>
+  <path d="M585 186 L635 186" class="line"/>
+  <path d="M780 186 L830 186" class="line"/>
+  <path d="M975 186 L1025 186" class="line"/>
+
+  <rect x="45" y="335" width="1130" height="215" rx="18" fill="#f7fee7" stroke="#bbf7d0"/>
+  <text x="70" y="369" class="lane">在线问答：先检索可信资料，再让模型基于资料回答</text>
+
+  <rect x="80" y="420" width="135" height="62" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/>
+  <text x="147" y="446" class="txt">用户问题</text>
+  <text x="147" y="467" class="small">自然语言</text>
+
+  <rect x="265" y="420" width="145" height="62" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/>
+  <text x="337" y="446" class="txt">问题改写</text>
+  <text x="337" y="467" class="small">补全检索意图</text>
+
+  <rect x="460" y="420" width="145" height="62" rx="12" fill="#e0f2fe" stroke="#0284c7" class="node"/>
+  <text x="532" y="446" class="txt">TopK 检索</text>
+  <text x="532" y="467" class="small">向量 + 过滤</text>
+
+  <rect x="655" y="420" width="145" height="62" rx="12" fill="#fef3c7" stroke="#d97706" class="node"/>
+  <text x="727" y="446" class="txt">重排过滤</text>
+  <text x="727" y="467" class="small">去噪 / 权限</text>
+
+  <rect x="850" y="420" width="145" height="62" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/>
+  <text x="922" y="446" class="txt">拼 Prompt</text>
+  <text x="922" y="467" class="small">资料 + 规则</text>
+
+  <rect x="1045" y="420" width="95" height="62" rx="12" fill="#fee2e2" stroke="#dc2626" class="node"/>
+  <text x="1092" y="446" class="txt">回答</text>
+  <text x="1092" y="467" class="small">带来源</text>
+
+  <path d="M215 451 L265 451" class="line"/>
+  <path d="M410 451 L460 451" class="line"/>
+  <path d="M605 451 L655 451" class="line"/>
+  <path d="M800 451 L850 451" class="line"/>
+  <path d="M995 451 L1045 451" class="line"/>
+  <path d="M1082 217 C1082 295, 532 307, 532 420" class="line"/>
+
+  <text x="74" y="597" class="note">高频坑：RAG 不是“把所有文档塞给模型”，而是用检索把少量高相关、已授权、可引用的资料放进上下文。</text>
+</svg>
