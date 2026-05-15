@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="560" viewBox="0 0 1180 560" role="img" aria-label="Java 堆分代：Eden、Survivor、老年代">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L8,3 z" fill="#64748b"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .title{font:700 24px 'Microsoft YaHei',Arial,sans-serif;fill:#172033}
+      .txt{font:700 16px 'Microsoft YaHei',Arial,sans-serif;fill:#172033;text-anchor:middle}
+      .small{font:600 13px 'Microsoft YaHei',Arial,sans-serif;fill:#475569;text-anchor:middle}
+      .note{font:600 12px 'Microsoft YaHei',Arial,sans-serif;fill:#64748b;text-anchor:middle}
+      .node{filter:url(#shadow);stroke-width:2}
+      .line{stroke:#64748b;stroke-width:2.2;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1180" height="560" rx="18" fill="#f8fafc"/>
+  <text x="32" y="44" class="title">Java 堆分代：Eden、新生代、老年代的职责和对象流转</text>
+
+  <rect x="60" y="210" width="150" height="72" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/>
+  <text x="135" y="240" class="txt">新对象</text>
+  <text x="135" y="264" class="small">多数先分配到 Eden</text>
+
+  <rect x="285" y="115" width="420" height="260" rx="16" fill="#ecfdf5" stroke="#16a34a" stroke-width="2"/>
+  <text x="495" y="148" class="txt">新生代 Young Generation</text>
+  <text x="495" y="171" class="small">对象朝生夕死，Young GC 频繁但通常较快</text>
+
+  <rect x="320" y="215" width="150" height="74" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/>
+  <text x="395" y="245" class="txt">Eden</text>
+  <text x="395" y="269" class="small">新对象主要入口</text>
+
+  <rect x="510" y="215" width="75" height="74" rx="12" fill="#f0fdf4" stroke="#22c55e" class="node"/>
+  <text x="547" y="245" class="txt">S0</text>
+  <text x="547" y="269" class="small">幸存区</text>
+
+  <rect x="605" y="215" width="75" height="74" rx="12" fill="#f0fdf4" stroke="#22c55e" class="node"/>
+  <text x="642" y="245" class="txt">S1</text>
+  <text x="642" y="269" class="small">幸存区</text>
+
+  <rect x="795" y="170" width="260" height="150" rx="16" fill="#ede9fe" stroke="#7c3aed" class="node"/>
+  <text x="925" y="220" class="txt">老年代 Old Generation</text>
+  <text x="925" y="246" class="small">长期存活对象、大对象</text>
+  <text x="925" y="270" class="small">回收成本更高，Full GC 风险更大</text>
+
+  <line x1="210" y1="246" x2="320" y2="246" class="line"/>
+  <line x1="470" y1="246" x2="510" y2="246" class="line"/>
+  <line x1="585" y1="246" x2="605" y2="246" class="line"/>
+  <line x1="680" y1="246" x2="795" y2="246" class="line"/>
+  <text x="735" y="232" class="note">年龄达到阈值 / Survivor 放不下</text>
+
+  <path d="M642 215 C642 88, 547 88, 547 215" fill="none" stroke="#64748b" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <text x="595" y="95" class="note">每次 Young GC 后在 S0/S1 间复制，年龄 +1</text>
+
+  <path d="M395 289 C455 420, 800 420, 850 320" fill="none" stroke="#d97706" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <text x="625" y="430" class="note" fill="#d97706">大对象可能直接进入老年代，避免在新生代反复复制</text>
+
+  <rect x="150" y="455" width="880" height="52" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="590" y="486" class="small">面试主线：新对象先进 Eden；Young GC 后存活对象进 Survivor 并增加年龄；长期存活或大对象进入老年代；老年代压力大容易触发更重的 GC。</text>
+</svg>
