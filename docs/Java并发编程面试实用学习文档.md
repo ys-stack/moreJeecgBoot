@@ -542,24 +542,27 @@ new ThreadPoolExecutor(
 推荐显式创建：
 
 ```java
+//线程安全的计数器，避免多个线程过来获取重复编号
 private static final AtomicInteger THREAD_INDEX = new AtomicInteger(1);
 
+//定义线程工厂
 private static final ThreadFactory ORDER_EXPORT_THREAD_FACTORY = runnable -> {
     Thread thread = new Thread(runnable);
     thread.setName("order-export-" + THREAD_INDEX.getAndIncrement());
+    //通过 setUncaughtExceptionHandler 捕获线程内部抛出的未处理异常，并打印错误日志（包含线程名和异常栈）。如果不设置，线程内部的未捕获异常可能会导致线程静默死亡，难以定位问题。
     thread.setUncaughtExceptionHandler((t, e) -> log.error("thread error, name={}", t.getName(), e));
     return thread;
 };
 
-ThreadPoolExecutor executor = new ThreadPoolExecutor(
-        16,
-        32,
-        60,
-        TimeUnit.SECONDS,
-        new ArrayBlockingQueue<>(1000),
-        ORDER_EXPORT_THREAD_FACTORY,
-        new ThreadPoolExecutor.CallerRunsPolicy()
-);
+	ThreadPoolExecutor executor = new ThreadPoolExecutor(
+	        16,                                     // corePoolSize: 核心线程数
+	        32,                                     // maximumPoolSize: 最大线程数
+	        60,                                     // keepAliveTime: 空闲线程存活时间
+	        TimeUnit.SECONDS,                       // unit: 存活时间单位（秒）
+	        new ArrayBlockingQueue<>(1000),         // workQueue: 工作队列
+	        ORDER_EXPORT_THREAD_FACTORY,            // threadFactory: 自定义线程工厂
+	        new ThreadPoolExecutor.CallerRunsPolicy() // handler: 拒绝策略
+	);
 ```
 
 如果项目里有 Guava、Apache Commons Lang 或自研基础包，也可以用现成的 `ThreadFactoryBuilder`。关键是至少要给线程命名，最好再加未捕获异常日志，否则线上看线程栈时很难定位任务来源。
@@ -827,7 +830,7 @@ JVM 锁只在单个 Java 进程内有效。如果应用多实例部署，`synchr
 - 异步解决等待占用线程的问题，但会增加超时、异常、上下文、排查复杂度。
 - 线程池解决并发控制，但配置不当会变成故障放大器。
 
-面试表达：
+面试表达：-+
 
 > 我会先判断是否真的需要共享。如果能通过局部变量、不可变对象、消息传递避免共享，就不加锁。必须共享时，再根据读写比例、竞争强度、一致性要求选择 synchronized、ReentrantLock、原子类或并发容器。对于 IO 等待型任务，会考虑异步和独立线程池，但必须配超时、限流和监控。
 
