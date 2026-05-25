@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="640" viewBox="0 0 1260 640" role="img" aria-label="订单系统分库分表示例">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#64748b"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .title{font:700 24px 'Microsoft YaHei',Arial;fill:#172033}
+      .txt{font:700 15px 'Microsoft YaHei',Arial;fill:#172033;text-anchor:middle}
+      .small{font:600 12px 'Microsoft YaHei',Arial;fill:#64748b;text-anchor:middle}
+      .note{font:600 13px 'Microsoft YaHei',Arial;fill:#475569}
+      .node{filter:url(#shadow);stroke-width:2}
+      .line{stroke:#64748b;stroke-width:2.2;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1260" height="640" rx="18" fill="#f8fafc"/>
+  <text x="34" y="46" class="title">真实案例：订单系统按 user_id 水平分库分表</text>
+
+  <rect x="70" y="110" width="150" height="66" rx="12" fill="#dbeafe" stroke="#2563eb" class="node"/>
+  <text x="145" y="137" class="txt">用户请求</text>
+  <text x="145" y="158" class="small">user_id = 10025</text>
+
+  <rect x="275" y="110" width="170" height="66" rx="12" fill="#dcfce7" stroke="#16a34a" class="node"/>
+  <text x="360" y="137" class="txt">路由层</text>
+  <text x="360" y="158" class="small">user_id % 8</text>
+
+  <rect x="540" y="70" width="150" height="56" rx="12" fill="#fee2e2" stroke="#dc2626" class="node"/>
+  <text x="615" y="103" class="txt">order_db_0</text>
+
+  <rect x="540" y="140" width="150" height="56" rx="12" fill="#fee2e2" stroke="#dc2626" class="node"/>
+  <text x="615" y="173" class="txt">order_db_1</text>
+
+  <rect x="745" y="70" width="135" height="56" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/>
+  <text x="812" y="103" class="txt">orders_0</text>
+
+  <rect x="910" y="70" width="135" height="56" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/>
+  <text x="978" y="103" class="txt">orders_1</text>
+
+  <rect x="745" y="140" width="135" height="56" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/>
+  <text x="812" y="173" class="txt">orders_2</text>
+
+  <rect x="910" y="140" width="135" height="56" rx="12" fill="#ede9fe" stroke="#7c3aed" class="node"/>
+  <text x="978" y="173" class="txt">orders_3</text>
+
+  <rect x="540" y="250" width="170" height="66" rx="12" fill="#fef3c7" stroke="#d97706" class="node"/>
+  <text x="625" y="277" class="txt">全局 ID</text>
+  <text x="625" y="298" class="small">雪花 ID / 号段</text>
+
+  <rect x="765" y="250" width="250" height="66" rx="12" fill="#ffffff" stroke="#64748b" class="node"/>
+  <text x="890" y="277" class="txt">写入 orders_x</text>
+  <text x="890" y="298" class="small">先生成 order_id，再按 user_id 路由</text>
+
+  <path d="M220 143 L275 143" class="line"/>
+  <path d="M445 143 L540 98" class="line"/>
+  <path d="M445 143 L540 168" class="line"/>
+  <path d="M445 143 L540 283" class="line"/>
+  <path d="M710 98 L745 98" class="line"/>
+  <path d="M710 98 L910 98" class="line"/>
+  <path d="M710 168 L745 168" class="line"/>
+  <path d="M710 168 L910 168" class="line"/>
+  <path d="M710 283 L765 283" class="line"/>
+
+  <rect x="85" y="380" width="1090" height="170" rx="16" fill="#eef6ff" stroke="#bfdbfe"/>
+  <text x="115" y="415" class="note">这个案例里，用户查自己的订单适合按 user_id 路由到单分片；后台按状态、时间全局查询就会广播所有分片，所以必须配合 ES、报表库或冗余查询表。</text>
+  <text x="115" y="445" class="note">技术实现上，一般由路由层计算 `db_index` 和 `table_index`，然后把逻辑 SQL 改写成真实库表。复杂场景可以交给 ShardingSphere-JDBC 或代理层统一处理。</text>
+  <text x="115" y="475" class="note">扩容时不能只会改取模，要考虑双写迁移、回填、对账和切流。否则用户一旦在迁移窗口里查订单，容易读到新旧两套数据。</text>
+  <text x="115" y="505" class="note">分库分表的目标不是“把表拆小”，而是让高频查询稳定命中单分片，让写入和索引压力分散到多个物理节点上。</text>
+</svg>
