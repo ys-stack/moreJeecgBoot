@@ -71,3 +71,23 @@ Spring MVC请求处理主链：
 过滤器和拦截器的区别：
 1.作用范围：过滤器可以拦截所有请求包括静态资源(通常用于字符编码，请求参数解密)，拦截器只能拦截走前端控制器的请求(登录/鉴权，设置常用Session属性，重复提交)
 2.执行先后：过滤器执行在拦截器前
+
+Mybatis SQL执行流程：
+比如我们调用的一条查询sql，
+1.从Mapper接口开始，其实是Spring注入进来的是MapperProxy动态代理对象。调用接口方法，代理就会根据接口全限定名+方法名找到对应的MappedStatement(一条 SQL 的元数据)
+2.进入sqlSession(对外操作入口),由Executor处理一级缓存/事务协同，再把具体JDBC操作交给StatementHandler
+3.tatementHandler` 负责创建和执行 JDBC 的 `Statement` 或 `PreparedStatement`。在真正发给数据库前，`ParameterHandler` 会把 `#{}` 里的参数设置进去；数据库返回结果后，`ResultSetHandler` 再把结果集映射成 Java 对象。`TypeHandler` 穿插在参数设置和结果映射里，负责 Java 类型和 JDBC 类型之间的转换。
+
+Mybatis缓存，一级默认开启，二级慎用：
+1.级别：一级缓存是SqlSession级别的，二级缓存是跟着Mapper的nameSpace走
+2.作用域：
+	一级缓存：同一个sqlSession里，完全相同的查询查过一次，后面可能直接从本地缓存中拿。若中途增删改提交回退一级缓存就会清掉。要注意，Spring整合Mybatis后，通过SqlSessionTemplate调mapper，会话范围取决于有没有待提交的事务。
+	二级缓存：业务一致性更难控制：一个 Mapper 的缓存不一定知道另一个 Mapper 或另一张表发生了更新，分布式部署下也更复杂。实际项目中一般不用，都是把业务缓存交给redis并加过期时间和失效策略
+
+#{}和${}:#预编译参数，后者字符串拼接，有sql注入风险
+
+SqlSessionTemplate把mybatis的sqlSession托管给了Spring，让SQL执行参与Spring事务，统一连接获取和释放
+
+ 为什么 Spring 事务能管住 MyBatis？
+ 答：Spring 在事务开启时会把连接资源绑定到当前线程，而 MyBatis 执行 SQL 时会从这套线程资源里拿连接。  
+所以同一个事务内，Spring 和 MyBatis 能协同工作。

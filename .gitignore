@@ -16,3 +16,9 @@ derby.log
 .cursor
 .history
 .claude
+
+## generated/temp
+node_modules/
+nul
+crawl_docs.py
+docs_summary.xlsx

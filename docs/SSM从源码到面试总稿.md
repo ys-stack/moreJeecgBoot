@@ -1487,8 +1487,38 @@ DispatcherServlet
 ## 九、MyBatis 核心执行链
 
 ![MyBatis 执行链路](images/ssm-10-mybatis-execution.svg)
+
+这张图讲的是：你平时调用的 `userMapper.selectById(id)`，并不是接口自己在执行 SQL，而是被 MyBatis 转成了一条完整的执行链。
+
+先从 Mapper 接口开始。Mapper 接口没有实现类，Spring 注入进来的实际是 `MapperProxy` 动态代理对象。你一调用接口方法，代理就会根据“接口全限定名 + 方法名”找到对应的 `MappedStatement`，也就是 XML 或注解里那条 SQL 的元数据。
+
+然后进入 `SqlSession`。`SqlSession` 可以理解成 MyBatis 对外暴露的会话入口，但它自己不真正干重活，真正调度 SQL 执行的是 `Executor`。`Executor` 会处理一级缓存、事务协同、查询或更新的分发，再把具体 JDBC 执行动作交给 `StatementHandler`。
+
+`StatementHandler` 负责创建和执行 JDBC 的 `Statement` 或 `PreparedStatement`。在真正发给数据库前，`ParameterHandler` 会把 `#{}` 里的参数设置进去；数据库返回结果后，`ResultSetHandler` 再把结果集映射成 Java 对象。`TypeHandler` 穿插在参数设置和结果映射里，负责 Java 类型和 JDBC 类型之间的转换。
+
+所以这张图最该记住的一句话是：**Mapper 方法调用只是入口，底层会经过代理定位 SQL，再由 `SqlSession`、`Executor` 和各类 Handler 配合完成参数绑定、SQL 执行和结果映射。**
+
 ![MyBatis 插件机制](images/ssm-11-mybatis-plugin.svg)
+
+这张图讲的是：MyBatis 插件不是在任意地方“插一脚”，它只能围绕四类核心对象做拦截：`Executor`、`StatementHandler`、`ParameterHandler`、`ResultSetHandler`。
+
+插件本质上还是动态代理。MyBatis 创建这些核心对象后，会用插件链一层层包起来；真正执行方法时，调用会先进入插件的 `intercept` 方法，插件可以在执行前后做增强，也可以修改 SQL、参数或结果，最后再通过 `invocation.proceed()` 放行到原始逻辑。
+
+你日常接触最多的是分页插件和多租户插件。分页插件常拦截 `Executor` 或 `StatementHandler`，在 SQL 发给数据库前追加 `limit`，必要时再生成一条 `count` SQL；多租户、数据权限插件则可能在 SQL 上追加 `tenant_id` 或权限条件。慢 SQL 统计、审计字段处理也可以基于类似机制做。
+
+这里有个容易忽略的点：插件是有顺序的。多个插件都改 SQL 时，谁先包裹、谁先执行，会影响最终 SQL 的样子。面试或排查问题时，不要只说“用了插件”，还要能说清楚“拦截了哪个对象、在 SQL 执行前还是执行后做了什么”。
+
 ![MyBatis 一级二级缓存](images/ssm-12-mybatis-cache.svg)
+
+这张图讲的是 MyBatis 自带缓存的范围：一级缓存跟着 `SqlSession` 走，二级缓存跟着 Mapper 的 namespace 走。
+
+一级缓存默认开启，作用范围是同一个 `SqlSession`。同一个会话里，完全相同的查询如果已经查过一次，后面可能直接从本地缓存拿结果，不再访问数据库。只要发生 `insert`、`update`、`delete`、`commit`、`rollback` 等操作，一级缓存通常会被清掉，避免同一个会话里继续读到明显过期的数据。
+
+在 Spring 整合 MyBatis 后，你通常不会手写 `SqlSession`，而是通过 `SqlSessionTemplate` 调 Mapper。没有事务时，一次 Mapper 调用通常很快结束；有事务时，同一事务线程内的数据库操作会围绕 Spring 绑定的连接和会话资源协同，所以更要知道一级缓存可能在同一会话范围内生效。
+
+二级缓存是 namespace 级别，多个 `SqlSession` 可以共享，但默认需要显式配置。它的问题是业务一致性更难控制：一个 Mapper 的缓存不一定知道另一个 Mapper 或另一张表发生了更新，分布式部署下也更复杂。所以实际项目里，一级缓存自然使用，二级缓存通常很谨慎；更常见的做法是把业务缓存交给 Redis、Caffeine 这类外部缓存，并明确设计 key、过期时间和失效策略。
+
+所以这张图最该记住的是：**一级缓存是会话内的小缓存，默认存在；二级缓存是 namespace 级别的共享缓存，理论上能减少查询，工程上却容易带来脏数据风险。**
 
 ### 9.1 Mapper 为什么能直接调用
 
