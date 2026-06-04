@@ -1,0 +1,73 @@
+spring容器启动 AbstractApplicationContext#refresh()
+1.repareRefresh()：准备启动环境，如记录容器启动时间，标记容器为active状态，初始化或校验Environment
+2.obtainFreshBeanFactory()：获取一个可用的 `BeanFactory`，源码核心是DefaultListableBeanFactory，解析xml注解等配置为BeanDfeinition
+3.prepareBeanFactory()：给 BeanFactory 装基础能力,如注册依赖，设置aware接口支持，设置表达式解析器等
+4.postProcessBeanFactory()：留给子类扩展
+5.invokeBeanFactoryPostProcessors():改图纸，即在BeanFactoryPostProcessor里修改BeanDfeinition，该阶段里ConfigurationClassPostProcessor负责处理一些注解配置如@Configuration，@Bean等。如`ConfigurationClassPostProcessor` 会解析这个配置类，把扫描到的组件、`@Bean` 方法、导入的配置等都变成 `BeanDefinition` 注册进容器。
+6.registerBeanPostProcessors()：注册 Bean 创建过程中的拦截器，如AOP 自动代理相关的处理器(AnnotationAwareAspectJAutoProxyCreator),处理 `@Autowired` 的关键处理器(AutowiredAnnotationBeanPostProcessor)
+7.initMessageSource():初始化国际化组件
+8.initApplicationEventMulticaster()：初始化事件广播器,这一阶段会准备好事件广播能力
+9.onRefresh()：子类刷新扩展,在springboot web应用创建和启动内嵌web服务器，如tomcat
+10.registerListeners()：注册事件监听器,监听器来源可能有两类 1.实现了 `ApplicationListener` 的 Bean 2.使用了 `@EventListener` 的方法
+11.finishBeanFactoryInitialization():开始创建Bean
+12.finishRefresh()：发布启动完成事件  收尾：清理临时缓存，初始化生命周期处理器，发布`ContextRefreshedEvent`，标记容器刷新完成
+
+为什么要先处理 `BeanDefinition`？
+	答：`BeanDefinition` 是 Spring 创建 Bean 前的准备数据，Spring 先改图纸，再照图纸造对象
+
+简短：Spring 容器启动核心是 `AbstractApplicationContext#refresh()`。它先准备环境，然后创建或刷新 `BeanFactory`，把 XML、注解、配置类等解析成 `BeanDefinition`。接着执行 `BeanFactoryPostProcessor`，比如 `ConfigurationClassPostProcessor` 会解析 `@Configuration`、`@ComponentScan`、`@Bean`。然后注册 `BeanPostProcessor`，这些处理器会在后续 Bean 创建时处理依赖注入、初始化回调、AOP 代理等。之后 Spring 初始化事件、国际化等组件，最后通过 `finishBeanFactoryInitialization()` 预实例化非懒加载单例 Bean。所有 Bean 创建完成后，发布 `ContextRefreshedEvent`，容器启动完成。
+
+
+Spring Bean的生命周期：
+DefaultListableBeanFactory#preInstantiateSingletons()
+1.从BeanDefinition开始(图纸)
+2.getBean(): 如果是非懒加载单例Bean，容器启动阶段会触发。如果是懒加载Bean，等到业务第一次用的时候触发；
+随后进入doGetBean().先查单例缓存，有就返回没有就检查BeanDefinition.如果依赖其它Bean，先创建依赖。根据Scope决定创建哪种作用域的对象，调用createBean()真正创建
+3.实例化Bean,这一步只是把对象造出来，还未完成依赖注入。  （常见的三种构造器方法-默认构造，带参构造，工厂方法）
+4.对于单例Bean提前暴露单例引用，处理部分循环依赖
+	spring为何能解决部分(setter或字段注入可解决，构造器循环依赖解决不了)循环依赖问题（单例三级缓存）？场景 A 依赖 B,B依赖A
+	1.创建A对象，先实例化A，此时没注入属性B，先把A的早期引用工厂(ObjectFactory)放在三级缓存
+	2.A填充属性发现需要B，再去创建B,然后发现需要A,此时A未完成初始化，但可以从三级缓存中拿到ObjectFactory
+	3.拿到ObjectFactory调用getObject()方法获取A的早期引用，并放入二级缓存，同时移除三级缓存中的对应项
+	4.B注入A的早期引用，初始化完成，放入一级缓存
+	5.A拿到B，完成初始化，放入一级缓存
+
+    二级缓存为什么需要？
+	答：假设A被B和C都依赖，那么实例化A的时候从三级缓存调用两次getObject()可能会获取不同的实例，二级缓存的保证单例。
+	为什么不直接获取A的早期引用，直接放入二级缓存？
+	答：这里spring用了延迟决策的思想。如果A加了 @Transactional,此时实例化拿到的A只是原对象，而最终放入一级缓存的是A的代理对象。
+	同一个 Bean，两个不同实例！且 B 调用 A 的方法时，事务不生效！
+5.依赖注入，处理字段注入，setter注入，@Resource等。(遇到同类型的Bean，依赖注入通常配合@Qualifier,可实现自定义注解)
+6.执行Aware回调，常见有BeanNameAware,ApplicationContextAware。实际开发很少用，会导致业务代码更依赖Spring容器
+7.初始化前的BeanPostProcessor，如@PostConstruct(初始化前的后置处理器里被调用)
+8.执行初始化方法，常见三种执行顺序  @PostConstruct -> 实现 `InitializingBean` -> @Bean(initMethod = "init")
+9.初始化后的 `BeanPostProcessor`,很多代理对象会在这里生成,如`@Transactional`，`@Cacheable`，`@Async`和自定义AOP切面
+10.注册销毁逻辑，如果Bean是单例，初始化完成后就放入一级缓存。 
+	常见的销毁执行顺序  @PreDestroy -> 实现DisposableBean -> @Bean(destroyMethod = "close")
+
+`BeanFactoryPostProcessor` vs `BeanPostProcessor`区别：
+BeanFactoryPostProcessor作用时机是Bean实例化前，作用的对象是BeanDefinition，常见用于改配置，改作用域等
+BeanPostProcessor作用实际是Bean创建前后，作用对象是Bean实例，常用于AOP代理，依赖注入等；
+比如`ConfigurationClassPostProcessor`负责解析配置类，`AutowiredAnnotationBeanPostProcessor`，AOP自动代理处理器都是常见的BeanPostProcessor
+
+IOC即控制反转，Spring的核心，把对象的创建和依赖关系统一交给容器管理。对象什么时候被创建，由容器决定，对象的依赖由容器注入。
+AOP即面向切面编程，是一种编程范式。核心思想就是把切点从业务中剥离出来，单独管理。常见场景有事务，自定义注解记录系统操作日志等
+常见的用法@Transactional,运行时通过动态代理生成了一个包装类，方法开始前开启事务，方法结束提交事务，抛异常回滚事务。写业务的时候无需关注这个。
+
+事务为什么能共用同一个连接？ Spring 事务靠的是 `TransactionSynchronizationManager` 这类线程绑定机制，连接被绑定到了当前线程，后续同线程内的 JDBC/MyBatis 操作复用这个连接
+
+JDK动态代理基于接口代理，适合于有接口的Bean;CGLIB代理对象 继承目标类生成子类，适用于没有接口或需要强制代理类
+
+
+Spring MVC请求处理主链：
+1.客户端请求过来先走过滤器链
+2.DispatcherServlet(前端控制器) 到 HandlerMapping找对应的Controller
+3.HandlerAdapter 处理参数绑定/返回类型
+4.控制层执行业务方法
+5.返回值处理器处理结果
+6.消息转换器转换消息格式，通常为JSON
+7.异常处理器统一兜底 异常统一处理： @ControllerAdvice+@ExceptionHandler
+
+过滤器和拦截器的区别：
+1.作用范围：过滤器可以拦截所有请求包括静态资源(通常用于字符编码，请求参数解密)，拦截器只能拦截走前端控制器的请求(登录/鉴权，设置常用Session属性，重复提交)
+2.执行先后：过滤器执行在拦截器前
