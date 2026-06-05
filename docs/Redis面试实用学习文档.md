@@ -69,8 +69,8 @@ public class ProductQueryService {
 ## 目录
 
 - [一、Redis 面试主线](#一redis-面试主线)
-- [二、Redis 到底解决什么问题](#二redis-到底解决什么问题)
-- [三、核心数据结构与底层编码](#三核心数据结构与底层编码)
+- [二、Redis 数据类型与真实业务场景](#二redis-数据类型与真实业务场景)
+- [三、底层编码要点](#三底层编码要点)
 - [四、为什么 Redis 快](#四为什么-redis-快)
 - [五、持久化：RDB、AOF、混合持久化](#五持久化rdbaof混合持久化)
 - [六、高可用：主从、哨兵、集群](#六高可用主从哨兵集群)
@@ -100,79 +100,242 @@ public class ProductQueryService {
 面试官真正想听的是三件事：
 
 1. 你理解 Redis 不是停留在 API 层。
-2. 你知道缓存不是“放进去就完事”，而是一个一致性和稳定性工程问题。
+2. 你知道缓存不是"放进去就完事"，而是一个一致性和稳定性工程问题。
 3. 你遇到线上问题时，知道该看哪些指标、哪些命令、哪些根因。
 
 ---
 
-## 二、Redis 到底解决什么问题
+## 二、Redis 数据类型与真实业务场景
 
-Redis 的本质定位是：**高性能内存型键值数据库 + 丰富数据结构 + 一组适合缓存、分布式协调和流式消费的原子操作**。
+Redis 对外暴露 5 种基础类型 + 4 种扩展类型，面试的关键不是背命令，而是能说清"这个结构在什么业务下用、为什么不用别的"。
 
-它通常解决这些问题：
+### 2.1 String — 缓存 / 计数 / 分布式锁
 
-| 场景 | Redis 的价值 |
-| --- | --- |
-| 热点数据缓存 | 降低数据库压力，降低接口 RT |
-| 分布式会话/Token | 多实例共享状态 |
-| 排行榜、计数器、点赞 | 原子计数、排序结构 |
-| 限流、幂等、防重 | 原子操作 + TTL |
-| 分布式锁 | 跨实例协调 |
-| 消息削峰/轻量队列 | List / Stream |
-| 地理位置、标签检索 | GEO / Set / Bitmap / HyperLogLog |
+最万能的类型。存 JSON 做缓存、`INCR` 做原子计数、`SETNX + PX` 做分布式锁。
 
-面试里不要把 Redis 只说成“缓存”，更成熟的表达是：
+**场景：短信验证码，60 秒过期，防重发**
 
-> Redis 首先是高性能内存数据库，但工程上最常用的能力是缓存、分布式协调和高频读写场景下的数据结构支持。真正的难点不在于会不会用命令，而在于缓存一致性、高可用、失效策略和线上稳定性治理。
+```java
+// 存验证码，60s 自动过期
+redisTemplate.opsForValue().set("sms:code:" + phone, code, 60, TimeUnit.SECONDS);
+
+// 校验
+String cached = redisTemplate.opsForValue().get("sms:code:" + phone);
+if (!code.equals(cached)) throw new BizException("验证码错误或已过期");
+```
+
+**场景：接口限流 — 固定窗口**
+
+```java
+String key = "rate:limit:" + userId;
+Long count = redisTemplate.opsForValue().increment(key);
+if (count == 1) redisTemplate.expire(key, 1, TimeUnit.MINUTES);
+if (count > 100) throw new BizException("请求过于频繁");
+```
+
+### 2.2 Hash — 对象局部读写
+
+适合存"字段多但每次只改几个"的对象，比整个 JSON 覆盖更省带宽、更安全。
+
+**场景：用户 Profile 局部更新**
+
+```java
+String key = "user:profile:" + userId;
+// 只改昵称和头像，不碰其他字段
+Map<String, String> updates = Map.of("nickname", "阿飞", "avatar", "https://cdn/a.png");
+redisTemplate.opsForHash().putAll(key, updates);
+
+// 读取单个字段
+String nickname = (String) redisTemplate.opsForHash().get(key, "nickname");
+```
+
+对比 String 存 JSON：每次改一个字段都要反序列化→改→序列化→整体覆盖，Hash 只动目标字段。
+
+### 2.3 List — 消息队列 / 时间线
+
+有序、可重复、支持两端操作。`LPUSH + BRPOP` 可实现轻量阻塞队列。
+
+**场景：简易异步任务队列**
+
+```java
+// 生产者：投递任务
+redisTemplate.opsForList().leftPush("task:queue", taskJson);
+
+// 消费者：阻塞取任务，超时 5s
+String task = redisTemplate.opsForList().rightPop("task:queue", 5, TimeUnit.SECONDS);
+if (task != null) processTask(task);
+```
+
+**场景：最新评论时间线（保留最近 200 条）**
+
+```java
+redisTemplate.opsForList().leftPush("comment:timeline:" + articleId, commentJson);
+redisTemplate.opsForList().trim("comment:timeline:" + articleId, 0, 199);
+```
+
+### 2.4 Set — 去重 / 标签 / 交并差
+
+无序、唯一。天然适合"判断在不在"和"求交集"。
+
+**场景：文章点赞 + 判断是否已赞**
+
+```java
+String key = "article:likes:" + articleId;
+redisTemplate.opsForSet().add(key, userId);        // 点赞
+redisTemplate.opsForSet().remove(key, userId);     // 取消点赞
+Boolean liked = redisTemplate.opsForSet().isMember(key, userId); // 是否已赞
+Long likeCount = redisTemplate.opsForSet().size(key);            // 点赞总数
+```
+
+**场景：共同关注（两个用户关注集合取交集）**
+
+```java
+Set<String> common = redisTemplate.opsForSet().intersect(
+    "user:following:" + userIdA,
+    "user:following:" + userIdB
+);
+```
+
+### 2.5 ZSet（Sorted Set）— 排行榜 / 延迟队列
+
+score 排序 + member 唯一，是排行榜的标配结构。
+
+**场景：实时热搜排行榜**
+
+```java
+String key = "hot:search:rank";
+// 用户每搜一次，score +1
+redisTemplate.opsForZSet().incrementScore(key, keyword, 1);
+
+// 取 Top 10（score 从高到低）
+Set<ZSetOperations.TypedTuple<String>> top10 =
+    redisTemplate.opsForZSet().reverseRangeWithScores(key, 0, 9);
+
+// 查某关键词排名（0-based，需要 +1）
+Long rank = redisTemplate.opsForZSet().reverseRank(key, keyword);
+```
+
+**场景：延迟队列 — 订单超时取消**
+
+```java
+// score = 过期时间戳
+redisTemplate.opsForZSet().add("order:delay:queue", orderId, expireTimestamp);
+
+// 定时扫描：取出所有已到期的订单
+Set<String> expiredOrders = redisTemplate.opsForZSet()
+    .rangeByScore("order:delay:queue", 0, System.currentTimeMillis());
+// 处理后移除
+expiredOrders.forEach(id ->
+    redisTemplate.opsForZSet().remove("order:delay:queue", id));
+```
+
+### 2.6 Bitmap — 状态压缩
+
+本质还是 String，但按 bit 操作。适合"连续日期 + 布尔状态"场景，内存极省。
+
+**场景：用户每日签到，一年只占 365 bit ≈ 46 字节**
+
+```java
+String key = "user:checkin:" + userId + ":" + year;
+int dayOfYear = LocalDate.now().getDayOfYear();
+
+redisTemplate.opsForValue().setBit(key, dayOfYear, true);   // 签到
+boolean checked = redisTemplate.opsForValue().getBit(key, dayOfYear); // 今日是否已签
+
+// 本月签到天数
+long monthDays = redisTemplate.execute((RedisCallback<Long>) conn ->
+    conn.bitCount(key.getBytes(), startOffset, endOffset));
+```
+
+### 2.7 HyperLogLog — 近似去重计数
+
+误差约 0.81%，但内存固定 12KB。适合亿级 UV 统计这种"不需要精确到个位"的场景。
+
+**场景：页面 UV 统计**
+
+```java
+String key = "page:uv:" + date;
+redisTemplate.opsForHyperLogLog().add(key, userId);   // 每次访问丢进去
+Long uv = redisTemplate.opsForHyperLogLog().size(key); // 估算 UV 数
+```
+
+对比 Set：1 亿用户 Set 要几百 MB，HyperLogLog 只要 12KB。
+
+### 2.8 GEO — 地理位置
+
+存经纬度，支持距离计算和范围查询。
+
+**场景：附近门店**
+
+```java
+// 录入门店坐标
+redisTemplate.opsForGeo().add("store:geo",
+    new Point(116.397128, 39.916527), "朝阳店");
+redisTemplate.opsForGeo().add("store:geo",
+    new Point(116.481050, 39.908715), "国贸店");
+
+// 查 3km 内的门店
+GeoResults<RedisGeoCommands.GeoLocation<String>> nearby =
+    redisTemplate.opsForGeo().radius("store:geo",
+        new Circle(new Point(lng, lat),
+            new Distance(3, RedisGeoCommands.DistanceUnit.KILOMETERS)));
+```
+
+### 2.9 Stream — 消息流 / 消费组
+
+Redis 5.0 引入，支持消费组和消息确认，是 Redis 里最接近消息队列的结构。
+
+**场景：轻量订单消费组**
+
+```java
+// 生产
+Map<String, String> msg = Map.of("orderId", "10001", "action", "pay");
+redisTemplate.opsForStream()
+    .add(StreamRecords.string(msg).withStreamKey("order:stream"));
+
+// 创建消费组（只需一次）
+redisTemplate.opsForStream().createGroup("order:stream", "order-group");
+
+// 消费
+List<MapRecord<String, String, String>> records = redisTemplate.opsForStream().read(
+    Consumer.from("order-group", "consumer-1"),
+    StreamReadOptions.empty().count(10).block(Duration.ofSeconds(3)),
+    StreamOffset.create("order:stream", ReadOffset.lastConsumed()));
+
+// 确认
+records.forEach(r -> redisTemplate.opsForStream()
+    .acknowledge("order:stream", "order-group", r.getId()));
+```
+
+> 如果已有 RocketMQ / Kafka，Stream 通常做补位（轻量异步、临时消费），不替代专业 MQ。
 
 ---
 
-## 三、核心数据结构与底层编码
+## 三、底层编码要点
 
-### 3.1 Redis 常用数据结构
+面试不需要背所有编码名字，但要理解"同一个逻辑类型，数据量不同，底层实现不同"。
 
-| 结构 | 常见用途 | Java 业务场景 |
-| --- | --- | --- |
-| String | 缓存对象、计数器、分布式锁 | 用户缓存、验证码、库存扣减 |
-| Hash | 对象局部字段 | 用户 profile、配置项 |
-| List | 简单消息队列、时间线 | 异步任务、评论流 |
-| Set | 去重、标签 | UV、用户标签 |
-| ZSet | 排行榜、延迟队列 | 热度榜、积分榜 |
-| Bitmap | 状态压缩 | 签到、在线标记 |
-| HyperLogLog | 近似去重计数 | UV 统计 |
-| GEO | 地理位置 | 附近门店 |
-| Stream | 消息流 | 轻量消息消费组 |
+### 3.1 编码转换核心思路
 
-### 3.2 不要只背“数据结构”，要知道“底层编码”
+| 逻辑类型 | 数据量小时 | 数据量大时 | 关键点 |
+| --- | --- | --- | --- |
+| String | `int`（纯数字）/ `embstr`（短串） | `raw`（SDS） | embstr 一次 malloc，raw 两次 |
+| Hash | `listpack`（紧凑数组） | `hashtable` | 阈值由 `hash-max-listpack-entries/size` 控制 |
+| List | `listpack` | `quicklist`（listpack + 双向链表） | 两端操作 O(1)，中间操作 O(N) |
+| Set | `intset`（纯整数）/ `listpack` | `hashtable` | intset 升序数组，二分查找 |
+| ZSet | `listpack` | `skiplist + hashtable` | 跳表保序，字典 O(1) 查分 |
 
-Redis 对外暴露的是逻辑结构，但底层为了节省内存和提高性能，会采用不同编码。
+### 3.2 面试该怎么说
 
-例如：
+三个要点够了：
 
-- String：`int`、`embstr`、`raw`
-- Hash：小对象时偏紧凑编码，大对象时转哈希表
-- List：现代版本核心思路是快速双端操作 + 紧凑存储
-- ZSet：小集合时紧凑编码，大集合时跳表 + 字典
+1. **Redis 不是简单的 Map**——同一个类型在不同数据规模下编码不同，内存和性能特征也不同。
+2. **编码切换有阈值**——比如 Hash 默认 128 个字段或 64 字节以内用 listpack，超了切 hashtable。生产上可以调大阈值来省内存。
+3. **ZSet 为什么用跳表不用红黑树**——跳表实现简单、范围查询天然友好（链表顺序遍历）、并发友好。
 
-面试点不在于背所有编码名字，而在于你知道：
+### 3.3 一个容易踩的坑
 
-1. Redis 不只是“Map<String, Object>”
-2. 小对象和大对象的内部实现不同
-3. 底层编码切换会影响内存和性能
-
-### 3.3 为什么 ZSet 适合排行榜
-
-因为它同时维护：
-
-- score 有序
-- member 唯一
-
-所以能高效支持：
-
-- 查排名
-- 查 TopN
-- 查某人分数
-- 按分数范围查人
+如果你往 Hash 里存了 200 个字段，它会从 listpack 切成 hashtable，内存瞬间膨胀。如果你知道这个对象字段不会太多，可以适当调大 `hash-max-listpack-entries`，让它留在紧凑编码里。反过来说，如果你发现某个 Hash 内存异常大，先看看是不是编码已经切了 hashtable。
 
 ---
 
@@ -201,7 +364,7 @@ Redis 快，核心是几个因素叠加：
 
 ### 4.3 单线程到底指什么
 
-这里的“单线程”主要指：
+这里的"单线程"主要指：
 
 - **命令执行主线程是单线程模型**
 
@@ -225,68 +388,98 @@ Redis 快，核心是几个因素叠加：
 
 ## 五、持久化：RDB、AOF、混合持久化
 
-### 5.1 RDB
+Redis 数据在内存里，进程一挂数据就没了。持久化就是把内存数据落盘的手段，有两种基本方式 + 一种组合方式。
 
-RDB 是快照，特点：
+### 5.1 RDB（快照）
 
-- 某个时刻全量数据快照
-- 文件紧凑，恢复快
-- 适合备份和冷恢复
+RDB 的思路很直接：**在某个时间点把内存里的全量数据dump成一个紧凑的二进制文件**（默认 `dump.rdb`）。
 
-缺点：
+触发方式有三种：`save`（阻塞主进程，生产别用）、`bgsave`（fork 子进程，主进程继续服务）、`shutdown`（关进程时自动触发）。
 
-- 可能丢最后一次快照后的数据
+优点：文件小、恢复速度快、适合定期备份和异地容灾。
 
-### 5.2 AOF
+缺点：两次快照之间的写操作可能丢失。如果你设了 `save 900 1`（900 秒内至少 1 次写入才触发），那最坏情况可能丢 15 分钟数据。
 
-AOF 是追加写日志，特点：
+### 5.2 AOF（追加日志）
 
-- 记录写命令
-- 恢复时重放命令
-- 数据更完整
+AOF 的思路是：**把每一条写命令追加到日志文件末尾**（默认 `appendonly.aof`），恢复时重放所有命令。
 
-缺点：
+AOF 文件会随着写入不断膨胀，所以引入了 **AOF rewrite（重写）**：Redis fork 一个子进程，根据当前内存数据重新生成一份最小命令集，替换掉旧文件。比如对同一个 key 做了 100 次 SET，重写后只保留最后那一条。
 
-- 文件更大
-- 恢复一般比 RDB 慢
+优点：数据更完整，最多丢 1 秒（`everysec` 策略下）。
 
-### 5.3 `appendfsync` 三种策略
+缺点：文件比 RDB 大，恢复速度比 RDB 慢（要逐条重放命令）。
 
-| 策略 | 含义 | 取舍 |
+### 5.3 fork 到底干了什么
+
+这是面试高频追问点。不管是 `bgsave` 还是 AOF rewrite，Redis 都走同一条路：
+
+```text
+主进程收到持久化指令
+  → 调用 Linux fork() 创建子进程
+  → 子进程拿到父进程内存的"完整副本"
+  → 子进程在副本上做快照/重写，写盘
+  → 主进程继续处理客户端请求，互不干扰
+```
+
+这里的核心机制是操作系统的 **Copy-On-Write（写时复制，COW）**：
+
+fork 的瞬间，子进程并不真的复制一份完整内存，而是和父进程**共享同一份物理页**，页表标记为只读。只有当父进程要写某一页时，OS 才会把这一页复制一份给父进程去改，子进程继续读原来的。
+
+这意味着：
+
+**fork 本身的代价** — fork 需要复制页表（不是复制数据页）。如果 Redis 占 10GB 内存，页表大约几十 MB，fork 瞬间主进程会阻塞几毫秒到几十毫秒。内存越大，页表越大，阻塞越久。这就是为什么**大实例 fork 会造成短时延迟抖动**。
+
+**COW 的内存代价** — fork 之后，如果主进程大量写入，被修改的页都会被复制一份。极端情况下（主进程在 bgsave 期间把全部内存页都写了一遍），实际内存占用会接近原来的 2 倍。这就是生产上 Redis 内存利用率不建议超过 50%-60% 的原因之一——要给 COW 留余量。
+
+**实际影响总结：**
+
+| 影响 | 表现 | 应对 |
 | --- | --- | --- |
-| `always` | 每次写都刷盘 | 最安全，性能最差 |
-| `everysec` | 每秒刷盘 | 工程上常用 |
-| `no` | 交给 OS | 性能高，风险大 |
+| fork 阻塞 | 主进程短时无法处理请求（ms 级） | 避免单实例内存过大，建议 < 10GB |
+| COW 内存膨胀 | 物理内存可能翻倍 | 预留内存余量，`maxmemory` 不要设太满 |
+| 磁盘 IO | 子进程写盘可能和主进程抢 IO | 独立磁盘或 SSD，`renice` 降低子进程优先级 |
 
-### 5.4 混合持久化
+> 面试这样说：RDB 和 AOF rewrite 都依赖 fork + COW，fork 的阻塞和 COW 的内存膨胀是大实例持久化的核心风险，所以生产上一般控制单实例内存，并用 `maxmemory-policy` 和合理的内存预留来兜底。
 
-现代 Redis 常见思路是：
+### 5.4 `appendfsync` 三种策略到底在控制什么
 
-- 重写时用 RDB 作为 base
-- 增量用 AOF 记录
+AOF 写入分两步理解：
 
-这样能在恢复速度和数据完整性之间取得平衡。
+```text
+写命令 → 追加到 AOF 缓冲区（aof_buf，用户态内存）
+       → fsync 刷到磁盘（内核页缓存 → 磁盘）
+```
 
-### 5.5 面试怎么选
+`appendfsync` 控制的就是**第二步的刷盘频率**：
 
-如果是纯缓存：
+| 策略 | 行为 | 性能 | 数据安全 | 适用场景 |
+| --- | --- | --- | --- | --- |
+| `always` | 每条写命令都立即 `fsync` 到磁盘 | 最差，TPS 可能掉到几百 | 最高，不丢数据 | 金融级强一致，极少用 |
+| `everysec` | 每秒由后台线程批量 `fsync` 一次 | 好，接近无持久化 | 最多丢约 1 秒数据 | **生产最常用** |
+| `no` | 不主动 `fsync`，交给 OS 自己决定（通常 30 秒） | 最好 | 风险最大，OS 崩溃可能丢大量数据 | 纯缓存、允许丢数据 |
 
-- 可以弱持久化，甚至关闭
+补充一个细节：`everysec` 模式下，如果 `fsync` 还没完成又到了下一秒，Redis 默认会**阻塞等待上一次 fsync 完成**再继续写入（由 `aof-delay-fsync` 控制，默认 0 即不延迟等待）。这意味着一次慢磁盘 IO 可能拖慢整个 Redis。
 
-如果是高价值状态数据：
+> 面试这样说：`appendfsync` 本质控制的是 AOF 缓冲区到磁盘的刷盘频率。`always` 每条都刷，最安全但最慢；`everysec` 每秒刷一次，是性能和安全的平衡点；`no` 交给操作系统，性能最好但宕机可能丢数据。大多数业务选 `everysec` 就够了。
 
-- 通常至少 AOF `everysec`
-- 关键业务可结合 RDB + AOF
+### 5.5 混合持久化
 
-### 5.6 你要知道 fork 的代价
+Redis 4.0+ 引入，核心思路：**AOF rewrite 时，前半段用 RDB 格式写快照，后半段追加增量 AOF 命令**。
 
-无论 RDB 还是 AOF rewrite，常见都会涉及 `fork`。  
-大内存实例 `fork` 会带来：
+这样得到的文件既是合法 AOF 文件（Redis 能识别），又享受了 RDB 恢复快的优势。恢复时先加载 RDB 部分（快），再重放后面的 AOF 增量命令（少），整体恢复速度远优于纯 AOF。
 
-- 短时阻塞
-- Copy-On-Write 内存膨胀
+开启方式：`aof-use-rdb-preamble yes`（Redis 5.0+ 默认开启）。
 
-这也是为什么超大单实例 Redis 风险很高。
+### 5.6 生产环境怎么选
+
+| 场景 | 推荐方案 | 理由 |
+| --- | --- | --- |
+| 纯缓存，数据可重建 | 关闭持久化，或只开 RDB | 省 IO，恢复不重要 |
+| 一般业务缓存 + 状态 | AOF `everysec` + 混合持久化 | 兼顾恢复速度和安全 |
+| 高价值状态（分布式锁、会话） | AOF `everysec` + 定期 RDB 备份 | 双保险，RDB 用于异地容灾 |
+
+不管哪种方案，都要注意 fork 的代价。单实例内存越大，fork 阻塞越久、COW 膨胀越严重。这也是为什么生产上通常把单实例控制在 10GB 以内，大数据量用 Cluster 分片来分散。
 
 ---
 
@@ -381,7 +574,7 @@ Redis Cluster 解决的是：
 - 限流降级
 - Redis 高可用
 
-### 7.2 一致性不要回答成“绝对一致”
+### 7.2 一致性不要回答成"绝对一致"
 
 Redis + MySQL 的缓存一致性，本质上多数业务只能做到：
 
@@ -403,7 +596,7 @@ Redis + MySQL 的缓存一致性，本质上多数业务只能做到：
 
 这是最常用方案。
 
-### 7.3 为什么常说“更新 DB 后删缓存”
+### 7.3 为什么常说"更新 DB 后删缓存"
 
 因为如果先删缓存再写库，可能出现：
 
@@ -470,7 +663,7 @@ SET key value NX PX 30000
 
 1. 本质上是 AP 系统上的工程锁，不是数据库事务锁
 2. 时钟、GC、网络抖动都可能带来边界问题
-3. 高一致核心链路不要过度迷信“Redis 锁万能”
+3. 高一致核心链路不要过度迷信"Redis 锁万能"
 
 ### 8.4 限流场景
 
@@ -645,4 +838,4 @@ Redis 这块，四年经验想在面试里拉开差距，重点不是背命令�
 
 > Redis 为什么快，缓存为什么会出一致性问题，分布式锁为什么有边界，持久化和高可用怎么选，线上 BigKey/HotKey/慢命令怎么查。
 
-你把这条主线吃透，Redis 基本就不再是“会用”，而是“真正在工程里用过并思考过”。
+你把这条主线吃透，Redis 基本就不再是"会用"，而是"真正在工程里用过并思考过"。
