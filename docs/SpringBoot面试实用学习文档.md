@@ -144,6 +144,40 @@ SpringApplication.run(Application.class, args);
   -> 发布启动完成事件
 ```
 
+### 3.2.1 SpringApplication.run() 内部细节
+
+run() 方法拆成两大阶段：构造阶段 + 运行阶段。
+
+**构造阶段**（new SpringApplication 时）：
+
+1. 推断应用类型：根据 classpath 推断 `WebApplicationType`（SERVLET / REACTIVE / NONE）。判断依据是类路径是否存在 `DispatcherServlet`、`DispatcherHandler` 等标记类。
+2. 加载 `ApplicationContextInitializer`：从 `spring.factories` 读取，用于容器 refresh 前自定义上下文。
+3. 加载 `ApplicationListener`：同样从 `spring.factories` 读取早期监听器。
+4. 推断主类：通过异常堆栈回溯找到 `main()` 方法所在类。
+
+**运行阶段**（run(args) 方法体内）：
+
+```text
+1. 创建 SpringApplicationRunListeners → 负责在整个启动过程中发出事件
+2. 触发 starting 事件
+3. 准备 Environment（加载 application.yml、命令行参数、环境变量等）
+4. 触发 environmentPrepared 事件
+5. 创建 ApplicationContext（根据 WebApplicationType 选择不同容器类型）
+6. 执行所有 ApplicationContextInitializer
+7. 触发 contextPrepared 事件
+8. 加载 BeanDefinition（扫描 @Component、解析 @Configuration、处理 @Import）
+9. 触发 contextLoaded 事件
+10. 调用 refreshContext() → 这里才是 Spring 真正的 IoC 容器初始化和 Bean 创建
+11. 触发 started 事件
+12. 执行 ApplicationRunner / CommandLineRunner
+13. 触发 running 事件
+```
+
+面试追问"refresh 做了什么"时的关键点：
+- `invokeBeanFactoryPostProcessors()`：执行 `ConfigurationClassPostProcessor`，它解析所有 `@Configuration`、`@ComponentScan`、`@Import`、`@Bean`
+- `registerBeanPostProcessors()`：注册所有 BeanPostProcessor（如 `AutowiredAnnotationBeanPostProcessor`、`CommonAnnotationBeanPostProcessor`）
+- `finishBeanFactoryInitialization()`：实例化所有非懒加载单例 Bean，触发 `@PostConstruct`、`InitializingBean`、自定义 init-method
+
 ### 3.3 Boot 启动和 Spring refresh 的关系
 
 Spring Boot 不是替代 `refresh()`，而是在它前后补了一层应用级启动编排。
@@ -191,6 +225,47 @@ Spring Boot 自动配置的本质是：
 
 > 自动配置不是无脑生效，而是“按 classpath、配置项、上下文 Bean、应用类型等条件动态决策是否装配”。
 
+### 4.2.1 自动配置类的发现机制（SPI 加载）
+
+`@EnableAutoConfiguration` 本身通过 `@Import(AutoConfigurationImportSelector.class)` 导入选择器。选择器的核心工作就是找到所有候选自动配置类。
+
+**Boot 2.x（传统方式）**：
+扫描所有 jar 下的 `META-INF/spring.factories`，读取 `EnableAutoConfiguration` 对应的配置类全限定名列表。
+
+```properties
+# META-INF/spring.factories
+org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
+  com.example.MyAutoConfiguration,\
+  com.example.AnotherAutoConfiguration
+```
+
+**Boot 3.x（新机制）**：
+改用 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` 文件，每行一个配置类全限定名：
+
+```text
+# META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports
+com.example.MyAutoConfiguration
+com.example.AnotherAutoConfiguration
+```
+
+为什么要改？
+- `spring.factories` 承载了太多不同类型的扩展点（Listener、Initializer、EnvironmentPostProcessor 全混在一起），解析效率低
+- 新文件职责单一，只放自动配置类，Boot 启动扫描更快
+- 支持按文件分行做更细粒度的 exclude
+
+**加载后的过滤流程**：
+
+```text
+读取所有候选类
+  → 去重
+  → 排除 @SpringBootApplication(exclude=...) 指定的类
+  → 按 @AutoConfigureBefore / @AutoConfigureAfter / @AutoConfigureOrder 排序
+  → 逐一评估 @Conditional 条件
+  → 条件满足的注册为 BeanDefinition
+```
+
+面试中如果被问"为什么我的自动配置没生效"，可以按这个链路排查：类有没有写进 imports 文件 → 条件注解是否满足 → 有没有被 exclude → 有没有被用户自定义 Bean 覆盖。
+
 ### 4.3 为什么引一个 starter 就能用
 
 因为 starter 通常带来两层东西：
@@ -213,6 +288,30 @@ Spring Boot 自动配置的本质是：
 - 用户自己声明 Bean 时再覆盖
 
 这也是“默认可用，但又允许自定义”的核心设计。
+
+### 4.4.1 条件注解的底层原理
+
+所有 `@ConditionalOnXxx` 注解背后都靠 `@Conditional` + `Condition` 接口驱动。核心方法只有一个：
+
+```java
+public interface Condition {
+    boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata);
+}
+```
+
+Spring 在解析 BeanDefinition 时，如果发现 `@Conditional`，就调用 `matches()`，返回 false 则跳过注册。
+
+常见条件注解的匹配逻辑：
+
+| 注解 | matches 做了什么 |
+| --- | --- |
+| `@ConditionalOnClass` | 检查类加载器能否找到指定类（通过 ASM 读字节码，不需要类真正加载） |
+| `@ConditionalOnMissingBean` | 遍历当前 BeanFactory，看是否已存在指定类型或名称的 BeanDefinition |
+| `@ConditionalOnProperty` | 从 Environment 读取属性值，判断是否匹配期望值 |
+| `@ConditionalOnWebApplication` | 检查 WebApplicationType 是否为 SERVLET 或 REACTIVE |
+
+**一个高频追问**：`@ConditionalOnClass` 为什么不会 `ClassNotFoundException`？
+因为它不是用 `Class.forName()` 加载类，而是通过 ASM 读取字节码中的类名信息做字符串匹配。配置类本身通过 `@Import` 延迟解析，类不存在时整个配置类直接被跳过，不会触发类加载。
 
 ### 4.5 面试里怎么说自动配置
 
@@ -353,6 +452,61 @@ starter 不是功能本身，而是：
 | `BeanPostProcessor` | 改 Bean 实例 |
 | `CommandLineRunner` / `ApplicationRunner` | 应用启动后执行逻辑 |
 
+### 7.3.1 手写一个自定义 Starter 的完整流程
+
+以"公司内部统一幂等 Starter"为例：
+
+**第一步：创建 autoconfigure 模块**
+
+```java
+@ConfigurationProperties(prefix = "company.idempotent")
+public class IdempotentProperties {
+    private boolean enabled = true;
+    private Duration expire = Duration.ofSeconds(10);
+}
+
+@Configuration
+@ConditionalOnClass(RedisTemplate.class)
+@ConditionalOnProperty(prefix = "company.idempotent", name = "enabled", havingValue = "true", matchIfMissing = true)
+@EnableConfigurationProperties(IdempotentProperties.class)
+public class IdempotentAutoConfiguration {
+
+    @Bean
+    @ConditionalOnMissingBean
+    public IdempotentAspect idempotentAspect(RedisTemplate<String, String> redisTemplate,
+                                              IdempotentProperties properties) {
+        return new IdempotentAspect(redisTemplate, properties);
+    }
+}
+```
+
+**第二步：注册自动配置类**
+
+Boot 3.x：在 `src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` 中写入：
+
+```text
+com.company.idempotent.IdempotentAutoConfiguration
+```
+
+**第三步：创建 starter 模块**
+
+starter 模块只是一个空壳 pom，引入 autoconfigure 模块 + Redis starter：
+
+```xml
+<dependencies>
+    <dependency>
+        <groupId>com.company</groupId>
+        <artifactId>idempotent-spring-boot-autoconfigure</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+</dependencies>
+```
+
+业务方只需引入 starter 依赖，就能自动获得幂等能力，也可以通过 `company.idempotent.enabled=false` 关闭。
+
 ### 7.4 什么时候写 starter
 
 适合：
@@ -366,6 +520,38 @@ starter 不是功能本身，而是：
 - 统一日志追踪 starter
 - 公司级鉴权 starter
 - 统一幂等/审计 starter
+
+---
+
+## 七·补、Bean 生命周期与 Boot 启动的交互
+
+面试中经常追问"Bean 什么时候创建、什么时候初始化"，这个和 Boot 启动流程密切相关。
+
+单例 Bean 的完整生命周期：
+
+```text
+1. 实例化（反射创建对象）
+2. 属性注入（@Autowired、@Value 解析）
+3. Aware 接口回调（BeanNameAware、ApplicationContextAware 等）
+4. BeanPostProcessor.postProcessBeforeInitialization()
+   → @PostConstruct 在这一步由 CommonAnnotationBeanPostProcessor 处理
+5. InitializingBean.afterPropertiesSet()
+6. 自定义 init-method
+7. BeanPostProcessor.postProcessAfterInitialization()
+   → AOP 代理在这一步由 AbstractAutoProxyCreator 创建
+8. 使用中
+9. @PreDestroy → DisposableBean.destroy() → 自定义 destroy-method
+```
+
+Boot 启动中几个关键时间点和 Bean 生命周期的关系：
+
+- `ApplicationContextInitializer` 在容器 refresh 之前执行，此时 Bean 还没创建
+- `BeanFactoryPostProcessor` 在 BeanDefinition 加载完、Bean 实例化之前执行
+- `BeanPostProcessor` 在每个 Bean 初始化前后执行
+- `ApplicationRunner` / `CommandLineRunner` 在所有单例 Bean 创建完成之后执行
+- `ApplicationListener<ApplicationReadyEvent>` 在 Runner 执行完毕后触发
+
+如果需要在"所有 Bean 都初始化完了但应用还没完全就绪"时做事，实现 `SmartLifecycle` 接口比 `ApplicationRunner` 更合适，因为它能感知容器的启停状态。
 
 ---
 
@@ -511,7 +697,7 @@ starter 不是功能本身，而是：
 
 ### 11.2 自动配置原理
 
-> 自动配置本质上是 Spring Boot 在启动时导入一组预定义配置类，再通过 `@ConditionalOnClass`、`@ConditionalOnMissingBean`、`@ConditionalOnProperty` 等条件注解决定哪些配置生效。starter 只是依赖入口，真正关键是 auto-configuration。
+> `@SpringBootApplication` 包含 `@EnableAutoConfiguration`，它通过 `@Import(AutoConfigurationImportSelector.class)` 导入选择器。选择器从 classpath 下所有 jar 的 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`（Boot 3.x）或 `META-INF/spring.factories`（Boot 2.x）中读取候选配置类，再经过 exclude 过滤和 `@AutoConfigureOrder` 排序后，逐一评估 `@Conditional` 条件。`@ConditionalOnClass` 通过 ASM 读字节码检查类是否存在而不会触发类加载，`@ConditionalOnMissingBean` 检查容器中是否已有同类型 Bean。条件全部满足的配置类才会被注册，这就是为什么引入 starter 就能自动获得能力，同时用户自定义 Bean 又能覆盖默认实现。
 
 ### 11.3 starter 是什么
 

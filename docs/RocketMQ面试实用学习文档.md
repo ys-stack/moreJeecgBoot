@@ -195,6 +195,26 @@ Producer 获取 Topic 路由
 - 零拷贝相关思路
 - CommitLog 统一追加存储
 
+### 4.2.1 零拷贝在 RocketMQ 中的应用
+
+RocketMQ 在两个方向上用了零拷贝技术：
+
+**写入方向 — mmap（内存映射）**：
+Producer 发消息时，Broker 用 mmap 把 CommitLog 文件映射到内存，写入 mmap 缓冲区 = 写入 PageCache，由 OS 负责刷盘。对应 Java 的 `MappedByteBuffer`。适合写入场景，因为写操作变成内存操作。
+
+**读取方向 — sendfile（文件传输）**：
+Consumer 拉消息时，Broker 用 `sendfile` 系统调用直接把文件数据从 PageCache 发送到 Socket 缓冲区，不经过用户空间。对应 Java 的 `FileChannel.transferTo()`。减少了一次内核态 → 用户态 → 内核态的拷贝。
+
+```text
+传统读写：
+磁盘文件 → 内核缓冲区 → 用户空间 → Socket缓冲区 → 网卡（4次拷贝，4次上下文切换）
+
+sendfile：
+磁盘文件 → 内核缓冲区 → Socket缓冲区 → 网卡（2-3次拷贝，2次上下文切换）
+```
+
+注意：mmap 适合小数据量写入（CommitLog 每次写入消息通常几 KB），sendfile 适合大数据量读取（Consumer 批量拉取）。两者不可混用。
+
 ### 4.3 常见存储文件角色
 
 高层理解上你需要知道：
@@ -202,6 +222,51 @@ Producer 获取 Topic 路由
 - CommitLog：消息主存储
 - ConsumeQueue：消费逻辑队列索引
 - IndexFile：按 key 查消息的辅助索引
+
+### 4.3.1 CommitLog 写入流程详解
+
+消息到达 Broker 后的写入链路：
+
+```text
+消息到达 Broker
+  → 加写锁（putMessageLock，保证同一时刻只有一个线程写 CommitLog）
+  → 追加写入 CommitLog 文件（顺序写，一个文件默认 1GB，写满后创建新文件）
+  → 写入 MappedByteBuffer（mmap 映射的 PageCache）
+  → 释放写锁
+  → 异步刷盘或同步刷盘（取决于配置）
+  → 主从模式下：异步复制到 Slave / 同步复制到 Slave
+  → 返回发送结果给 Producer
+```
+
+**为什么用 mmap（内存映射文件）而不是直接写磁盘？**
+
+mmap 把磁盘文件映射到用户空间的虚拟内存，写入 mmap 缓冲区就等于写入了 PageCache，由操作系统负责刷盘。好处是：
+- 减少一次内核态到用户态的数据拷贝
+- 写入操作变成内存操作，延迟极低
+- 多个 CommitLog 文件可以同时映射，通过文件偏移量快速定位
+
+**PageCache 刷盘策略**：
+
+| 模式 | 配置 | 行为 | 可靠性 | 性能 |
+| --- | --- | --- | --- | --- |
+| 异步刷盘 | ASYNC_FLUSH | 写入 PageCache 后立即返回成功，后台线程定时刷盘 | 宕机可能丢少量消息 | 高 |
+| 同步刷盘 | SYNC_FLUSH | 写入 PageCache 后等待刷盘完成才返回成功 | 不丢消息 | 低 |
+
+工程实践：大多数场景用异步刷盘 + 主从同步复制（SYNC_MASTER），兼顾性能和可靠性。金融场景可能要求同步刷盘。
+
+**ConsumeQueue 是怎么构建的？**
+
+CommitLog 写入后，`ReputMessageService` 后台线程持续从 CommitLog 末尾读取新消息，为每条消息构建 ConsumeQueue 条目：
+
+```text
+ConsumeQueue 每条记录 = [CommitLog 偏移量(8字节) | 消息大小(4字节) | Tag HashCode(8字节)]
+```
+
+这就是为什么消费端按队列消费很快——只需要顺序读 ConsumeQueue 索引，再按偏移量去 CommitLog 读消息体。
+
+**IndexFile 的作用**：
+
+IndexFile 是一个类似 HashMap 的文件结构（Header + SlotTable + IndexLinked），支持按 MessageKey 或 MessageId 快速查找消息。主要用于运维排查和消息轨迹查询，不参与正常消费链路。
 
 ### 4.4 为什么不是直接按队列存消息
 
@@ -235,6 +300,50 @@ RocketMQ 在集群消费下会把队列分配给不同消费者实例。
 所以一个核心认知是：
 
 **消费并发度通常先受队列数限制。**
+
+### 5.2.1 消费偏移量（Offset）管理
+
+RocketMQ 的消费进度用 Offset 表示——每个 Queue 消费到了哪个位置。
+
+**Offset 存储位置**：
+
+| 模式 | 存储位置 | 适用场景 |
+| --- | --- | --- |
+| 远程存储（默认） | Broker 端（consumer_offsets Topic） | 集群消费，多实例共享进度 |
+| 本地存储 | Consumer 本地文件 | 广播消费或特殊场景 |
+
+**Offset 提交流程**：
+
+```text
+Consumer 消费完一批消息
+  → 更新本地 PullRequest 的 offset
+  → 定时（默认 5 秒）批量提交到 Broker
+  → Broker 写入 consumer_offsets Topic（内部 Topic，16 个 Queue）
+  → consumer_offsets 定期 Compact（只保留每个 Group + Queue 最新 offset）
+```
+
+**面试高频追问：消费失败时 offset 怎么处理？**
+
+RocketMQ 消费模式是"先消费，后提交 offset"。如果消费失败，当前批次不会提交 offset，而是进入重试队列（%RETRY%Topic）。重试消息消费成功后才更新原 Queue 的 offset。这就是为什么消费失败不影响进度，但也意味着重试期间该 Queue 的 offset 不会前进。
+
+### 5.2.2 Consumer Rebalance 协议
+
+当消费者数量变化或队列数变化时，需要重新分配队列与消费者的映射关系。
+
+**触发条件**：
+- 消费者实例上线或下线
+- Topic 的读写队列数变更
+- 消费者订阅关系变更
+
+**分配策略**：
+- 平均分配（默认）：Queue 按顺序均分给 Consumer
+- 一致性哈希：尽量保持原有分配不变，减少迁移
+- 自定义策略：实现 `AllocateMessageQueueStrategy` 接口
+
+**Rebalance 过程中的问题**：
+- 短暂消费暂停（正在分配的 Queue 无人消费）
+- 可能出现重复消费（旧 Consumer 还没停，新 Consumer 已经开始）
+- 工程上建议：消费端做好幂等，Rebalance 期间不要做不可逆操作
 
 ### 5.3 消费失败会怎样
 
@@ -327,6 +436,34 @@ RocketMQ 常见是：
 
 不是强一致两阶段提交替代品。
 
+### 6.6 消息过滤机制
+
+RocketMQ 支持在 Broker 端过滤消息，避免无效消息到达 Consumer。
+
+**Tag 过滤**：
+
+Producer 发送时设置 Tag：`msg.setTags("order-created")`
+Consumer 订阅时指定 Tag：`consumer.subscribe("topic", "order-created || order-paid")`
+
+过滤流程（高效的两级过滤）：
+
+```text
+1. ConsumeQueue 存储了每条消息 Tag 的 HashCode（8字节）
+2. Broker 先用 HashCode 快速比对（不需要读消息体）
+3. HashCode 匹配后，再从 CommitLog 读完整消息，用 Tag 字符串精确比对（防止哈希碰撞）
+4. 通过的消息才返回给 Consumer
+```
+
+**SQL92 过滤**：
+
+更灵活但性能较低。Broker 用 SQLite 引擎对用户定义的 SQL 表达式求值：
+
+```java
+consumer.subscribe("topic", MessageSelector.bySql("price > 100 AND region = 'shanghai'"));
+```
+
+面试中如果被问 Tag 和 SQL92 怎么选：Tag 过滤性能远优于 SQL92，大多数业务场景用 Tag + 合理拆分 Topic 就够了。SQL92 适合需要多属性组合过滤且对吞吐要求不高的场景。
+
 ---
 
 ## 七、幂等、重复消费与最终一致性
@@ -407,6 +544,32 @@ RocketMQ 常见是：
 如果业务只要求“同订单顺序”，不要上升成“全系统顺序”。  
 分区顺序通常是更合理的工程答案。
 
+### 8.6 Broker 主从同步与高可用
+
+**主从角色**：
+
+- Master：可读写，接收 Producer 消息
+- Slave：只读，从 Master 同步数据，分担消费请求
+
+**同步方式**：
+
+| 模式 | 配置 | 行为 | 适用场景 |
+| --- | --- | --- | --- |
+| 异步复制 | ASYNC_MASTER | Master 写完立即返回成功，后台异步复制到 Slave | 追求性能，可容忍少量丢失 |
+| 同步双写 | SYNC_MASTER | Master 等待 Slave 确认后才返回成功 | 金融级场景，不允许丢消息 |
+
+**注意**：RocketMQ 的主从同步是数据复制，不是故障自动切换。Master 挂了不会自动把 Slave 提升为 Master（这是和 Kafka ISR 的关键区别）。需要搭配 DLedger（基于 Raft 的自动选主方案）或依赖运维手动切换。
+
+**面试追问"RocketMQ 怎么保证消息不丢"的完整回答**：
+
+```text
+发送端：Producer 用同步发送 + 重试机制，确保 Broker 确认收到
+存储端：Broker 配置 SYNC_FLUSH（同步刷盘）保证落盘不丢
+复制端：配置 SYNC_MASTER（同步双写）保证主从都有数据
+消费端：Consumer 消费成功后才提交 offset，失败则重试
+四端配合才能做到端到端不丢消息。
+```
+
 ---
 
 ## 九、常见线上问题与排查
@@ -454,6 +617,10 @@ RocketMQ 常见是：
 ### 10.2 RocketMQ 架构怎么讲
 
 > RocketMQ 的核心角色有 Producer、Consumer、Broker 和 NameServer。Producer 负责发消息，Broker 负责存储和转发，Consumer 负责消费，NameServer 提供路由发现。Broker 定期上报路由，Producer 和 Consumer 再按路由信息与 Broker 通信。
+
+### 10.2.1 RocketMQ 存储为什么快
+
+> RocketMQ 所有消息顺序追加写入同一个 CommitLog 文件，把随机写变成顺序写。写入时用 mmap 把文件映射到 PageCache，写操作变成内存操作。Consumer 拉取时用 sendfile 零拷贝直接从 PageCache 发送到网卡。刷盘策略可选异步或同步，大多数场景用异步刷盘加主从同步复制兼顾性能和可靠性。消费端通过 ConsumeQueue 索引快速定位消息，不需要扫描整个 CommitLog。
 
 ### 10.3 顺序消息怎么保证
 

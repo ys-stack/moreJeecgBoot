@@ -216,6 +216,49 @@ Spring Cloud 里最典型就是这个模式。
 
 不是所有场景都追求强一致。
 
+### 4.6 Nacos 注册中心的 AP/CP 双模式
+
+Nacos 同时支持 AP（可用性优先）和 CP（一致性优先）两种模式，这是面试高频考点。
+
+**AP 模式（默认，临时实例）**：
+
+- 协议：Distro（Nacos 自研的最终一致性协议）
+- 行为：每个 Nacos 节点独立处理请求，节点间异步同步数据，允许短暂不一致
+- 健康检查：客户端心跳模式（实例定时发心跳，超时则标记不健康，再超时则剔除）
+- 适用：大多数微服务注册发现场景，追求高可用
+
+**CP 模式（持久实例）**：
+
+- 协议：Raft（强一致性协议，类似 Zookeeper 的 ZAB）
+- 行为：写入必须经过 Leader 节点，多数派确认后数据才算写入成功
+- 健康检查：服务端主动探测（Nacos 服务端定时向实例发 TCP/HTTP 探测）
+- 适用：DNS 解析、K8s Service 等要求强一致的场景
+
+```text
+面试回答示例：
+Nacos 默认用 AP 模式（Distro 协议），追求高可用和最终一致，
+实例通过心跳维持注册状态。如果需要强一致，可以切换为 CP 模式
+（Raft 协议），但会牺牲部分可用性。大多数微服务场景用 AP 就够了。
+```
+
+### 4.7 Nacos 服务模型与健康检查
+
+Nacos 的服务模型是分层的：
+
+```text
+Namespace（命名空间，通常按环境隔离：dev/test/prod）
+  └── Group（分组，通常按业务域或项目分组）
+        └── Service（服务名，如 order-service）
+              └── Cluster（集群，通常按机房或区域分组）
+                    └── Instance（实例，具体的 IP:Port）
+```
+
+面试追问"Nacos 和 Eureka 的区别"时的关键点：
+- Eureka 只有 AP 模式（Peer-to-Peer 复制，最终一致），Nacos 支持 AP+CP 切换
+- Eureka 客户端心跳间隔 30 秒，Nacos 默认 5 秒，感知更快
+- Eureka 自我保护机制在大规模网络分区时可能保留不健康实例，Nacos 的健康检查更灵活
+- Nacos 同时提供配置中心能力，减少组件数量
+
 ---
 
 ## 五、配置中心与动态配置
@@ -277,6 +320,27 @@ Feign 的核心价值是：
 - 基于 HTTP 的客户端封装
 
 所以序列化、网络延迟、下游超时这些问题一个都没少。
+
+### 6.2.1 Feign 的底层执行链路
+
+面试追问"Feign 调用到底经历了什么"时的完整链路：
+
+```text
+1. 调用 stockClient.deduct(request)
+2. Feign 动态代理拦截方法调用
+3. Contract 解析接口注解（@PostMapping、@RequestParam 等）→ 构建 RequestTemplate
+4. Encoder 把参数序列化为请求体（默认 Jackson）
+5. RequestInterceptor 链执行（可以在这里加 Token、traceId 等 Header）
+6. LoadBalancer 从注册中心获取实例列表，选一个具体 IP:Port
+7. Client 发 HTTP 请求（默认 JDK URLConnection，可换成 OkHttp / HttpClient）
+8. Decoder 把响应体反序列化为返回对象
+9. 如果异常，ErrorDecoder 处理；如果配置了 Fallback，走降级逻辑
+```
+
+**Feign 性能优化要点**：
+- 默认 HTTP 客户端是 JDK 的 `HttpURLConnection`（无连接池），生产建议换成 OkHttp 或 Apache HttpClient
+- 日志级别设为 BASIC 而非 FULL，FULL 会打印完整请求体和响应体
+- 合理设置 connectTimeout 和 readTimeout，不要用默认值（默认各 10 秒可能过长）
 
 ### 6.3 客户端负载均衡怎么理解
 
@@ -371,6 +435,38 @@ A -> B -> C -> DB
 - 地域
 - 版本号
 
+### 7.5 Gateway 过滤器链执行原理
+
+Spring Cloud Gateway 基于 Spring WebFlux（Netty + Reactor），核心是过滤器链模式。
+
+**过滤器类型**：
+
+| 类型 | 作用域 | 示例 |
+| --- | --- | --- |
+| `GatewayFilter` | 单个路由 | 给某个路由加请求头 |
+| `GlobalFilter` | 所有路由 | 统一鉴权、日志、限流 |
+| `GatewayFilterFactory` | 工厂模式创建 GatewayFilter | 通过 YAML 配置使用 |
+
+**执行流程**：
+
+```text
+请求到达 Gateway
+  → HandlerMapping 匹配 Route（根据 Predicate 判断）
+  → 构建 FilterChain（该路由的 GatewayFilter + 所有 GlobalFilter）
+  → 按 order 排序（数值越小越先执行）
+  → Pre 阶段：从外到内依次执行过滤器（鉴权、限流、加 Header...）
+  → 转发请求到下游服务（NettyRoutingFilter，order 最大，最后执行）
+  → Post 阶段：从内到外依次执行过滤器（加响应头、记日志、改响应体...）
+  → 返回响应给客户端
+```
+
+**和普通 Servlet Filter 的区别**：
+- Gateway Filter 是异步非阻塞的，基于 `Mono<Void>` 链式调用
+- 底层是 Netty 而非 Tomcat，适合高并发网关场景
+- 不要在 Gateway Filter 里做阻塞操作（如 JDBC 查询），会阻塞 Netty EventLoop
+
+**面试加分点**：Gateway 的 Predicate 机制支持按 Path、Header、Method、Query、Time、Weight（灰度权重）等多维度路由匹配，比 Zuul 1.x 的 if-else 路由灵活得多。
+
 ---
 
 ## 八、熔断、限流、降级与隔离
@@ -431,6 +527,67 @@ A -> B -> C -> DB
 
 - 一个下游的问题不要拖死整个服务
 
+### 8.6 Resilience4j 熔断状态机
+
+Resilience4j 是当前 Spring Cloud 推荐的熔断实现（替代已停维的 Hystrix）。
+
+**三种状态及转换**：
+
+```text
+        失败率 ≥ 阈值              等待超时
+CLOSED ──────────→ OPEN ──────────→ HALF_OPEN
+  ↑                                      │
+  │         探测成功                       │
+  └──────────────────────────────────────┘
+                    │
+                    │ 探测失败
+                    ↓
+                  OPEN（重新计时）
+```
+
+- **CLOSED（关闭）**：正常状态，请求正常通过，内部计数器记录失败率
+- **OPEN（打开）**：失败率超过阈值，所有请求直接走 Fallback，不再调用下游
+- **HALF_OPEN（半开）**：等待超时后放少量探测请求（默认 10 个），成功则恢复 CLOSED，失败则回到 OPEN
+
+**关键配置参数**：
+
+| 参数 | 含义 | 建议值 |
+| --- | --- | --- |
+| failureRateThreshold | 触发熔断的失败率百分比 | 50 |
+| slowCallRateThreshold | 触发熔断的慢调用百分比 | 80 |
+| slowCallDurationThreshold | 慢调用判定时间 | 根据业务 RT |
+| waitDurationInOpenState | OPEN 状态等待时间 | 10-30s |
+| permittedNumberOfCallsInHalfOpenState | HALF_OPEN 探测请求数 | 10 |
+| slidingWindowSize | 滑动窗口大小 | 100 次或 60 秒 |
+
+**Hystrix vs Resilience4j 对比**：
+
+| 维度 | Hystrix | Resilience4j |
+| --- | --- | --- |
+| 隔离方式 | 线程池隔离（默认）/ 信号量 | 信号量隔离（更轻量） |
+| 熔断策略 | 基于滑动窗口计数 | 基于滑动窗口（计数或时间） |
+| 并发模型 | 线程池切换，有上下文开销 | 函数式装饰器，无额外线程 |
+| 维护状态 | 已停维 | 活跃维护 |
+
+### 8.7 滑动窗口实现
+
+Resilience4j 的熔断统计基于滑动窗口，有两种实现：
+
+**基于计数（Count-based）**：
+固定记录最近 N 次调用的结果（成功/失败/慢调用）。每次新调用进来，最旧的记录被挤出。
+
+**基于时间（Time-based）**：
+按秒切分成多个桶，保留最近 T 秒内的桶。过期桶自动丢弃。
+
+```text
+基于时间窗口示例（windowSize=10秒）：
+秒:  [0] [1] [2] [3] [4] [5] [6] [7] [8] [9] [10]
+桶:   3   5   2   8   1   4   6   3   7   2   5
+当前时间=10秒时，窗口=[1,2,...,10]，第0秒的桶被丢弃
+```
+
+面试中如果被问"为什么用滑动窗口不用固定窗口"：固定窗口有边界跳变问题——窗口切换瞬间统计值剧烈波动。滑动窗口更平滑，能更准确反映最近的调用质量。
+
 ---
 
 ## 九、高级用法与工程实践
@@ -443,6 +600,35 @@ A -> B -> C -> DB
 - 调用链透传
 - 日志统一打点
 - 指标与告警能关联
+
+### 9.1.1 Micrometer Tracing 链路追踪实现
+
+Spring Cloud 当前推荐的链路追踪方案是 Micrometer Tracing（原 Spring Cloud Sleuth 已合并进 Micrometer）。
+
+**核心概念**：
+
+| 概念 | 含义 |
+| --- | --- |
+| TraceId | 一条完整调用链的唯一标识，从入口生成，全链路透传 |
+| SpanId | 一个具体操作的标识（如一次 HTTP 调用、一次 DB 查询） |
+| ParentSpanId | 父操作标识，串联成树形调用关系 |
+| Sampling | 采样率，生产环境通常 1%-10%，避免全量采集拖垮性能 |
+
+**数据流转**：
+
+```text
+请求到达 Gateway
+  → 生成 TraceId + 入口 SpanId
+  → 通过 HTTP Header（X-B3-TraceId / X-B3-SpanId 或 W3C traceparent）透传到下游
+  → 每个服务在调用链中创建新 Span，记录 ParentSpanId
+  → Span 数据异步上报到 Zipkin / Jaeger / OTLP Collector
+  → 在可视化界面查看完整调用链和每段耗时
+```
+
+**工程落地要点**：
+- TraceId 要写入 MDC（Mapped Diagnostic Context），日志里自动带 traceId 字段，方便日志关联
+- 异步线程和 MQ 消费端要手动传递 TraceContext（或用 Micrometer 提供的 TaskDecorator）
+- 采样率不要在生产设为 100%，高流量下采集本身就是性能开销
 
 ### 9.2 多级超时控制
 
@@ -524,6 +710,10 @@ A -> B -> C -> DB
 ### 11.2 服务发现怎么工作
 
 > 服务实例启动后向注册中心注册并定期心跳，调用方从注册中心获取服务列表，再结合本地负载均衡策略选取一个实例发请求。客户端发现模式下，调用方本身就承担了路由决策。
+
+### 11.2.1 Nacos 和 Eureka 的区别
+
+> Eureka 只有 AP 模式，节点间异步复制数据，追求高可用和最终一致。Nacos 同时支持 AP 和 CP 模式，默认用 AP（Distro 协议），适合大多数微服务场景；需要强一致时可以切换为 CP（Raft 协议）。此外 Nacos 心跳间隔更短（默认 5 秒 vs Eureka 的 30 秒），服务变更感知更快，而且同时提供配置中心能力，减少了组件数量。
 
 ### 11.3 为什么要配置中心
 
