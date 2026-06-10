@@ -1147,6 +1147,132 @@ try {
 
 > synchronized 是 JVM 关键字，使用简单，自动释放锁；ReentrantLock 是 JUC 类，支持可中断、超时获取、公平锁和多个 Condition，但必须在 finally 里 unlock。简单互斥优先 synchronized，需要超时、公平、条件队列时考虑 ReentrantLock。
 
+更详细地说，两者都能解决“多个线程互斥访问共享资源”的问题，也都支持可重入：同一个线程拿到锁后，可以再次进入同一把锁保护的代码。但它们的定位不一样：
+
+| 对比点 | `synchronized` | `ReentrantLock` |
+| --- | --- | --- |
+| 类型 | JVM 关键字 | `java.util.concurrent.locks` 下的类 |
+| 释放锁 | 方法或代码块结束后自动释放，异常也会释放 | 必须手动 `unlock()`，通常写在 `finally` |
+| 可重入 | 支持 | 支持 |
+| 等锁时中断 | 不支持。线程等待进入 monitor 时一般是 `BLOCKED` | `lockInterruptibly()` 支持响应中断 |
+| 超时抢锁 | 不支持 | `tryLock()`、`tryLock(timeout, unit)` 支持 |
+| 公平锁 | 不支持显式公平策略 | 构造方法 `new ReentrantLock(true)` 可创建公平锁 |
+| 条件队列 | 一个锁对象只有一个 WaitSet，配合 `wait/notify` | 一个锁可以创建多个 `Condition`，可以按条件精确唤醒 |
+| 使用复杂度 | 简单，不容易写错 | 灵活，但忘记解锁会造成严重问题 |
+| 常见选择 | 普通同步代码块、简单临界区 | 需要超时、可中断、公平性、多条件队列、复杂锁控制 |
+
+**例 1：简单共享计数，优先用 synchronized**
+
+```java
+public class Counter {
+    private int count;
+
+    public synchronized void increment() {
+        count++;
+    }
+
+    public synchronized int get() {
+        return count;
+    }
+}
+```
+
+这类场景只是保护一个很小的临界区，没有超时、可中断、公平性要求，用 `synchronized` 更直接。锁的释放由 JVM 保证，代码也更不容易因为漏写 `unlock()` 出问题。
+
+**例 2：抢不到锁就降级，适合用 ReentrantLock.tryLock**
+
+```java
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
+
+public class InventoryService {
+    private final ReentrantLock lock = new ReentrantLock();
+    private int stock = 100;
+
+    public boolean deduct() throws InterruptedException {
+        if (!lock.tryLock(100, TimeUnit.MILLISECONDS)) {
+            // 抢锁超时，可以直接返回、降级、排队或提示用户稍后重试
+            return false;
+        }
+
+        try {
+            if (stock <= 0) {
+                return false;
+            }
+            stock--;
+            return true;
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+```
+
+如果这里用 `synchronized`，线程抢不到锁只能一直等，业务层很难做“最多等 100ms，超过就降级”的控制。`tryLock` 更适合需要控制等待时间的接口，比如热点库存、本地限流、后台任务互斥执行。
+
+**例 3：多个条件队列，ReentrantLock + Condition 表达更清楚**
+
+```java
+import java.util.LinkedList;
+import java.util.Queue;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
+
+public class BoundedQueue<T> {
+    private final Queue<T> queue = new LinkedList<>();
+    private final int capacity;
+    private final ReentrantLock lock = new ReentrantLock();
+    private final Condition notFull = lock.newCondition();
+    private final Condition notEmpty = lock.newCondition();
+
+    public BoundedQueue(int capacity) {
+        this.capacity = capacity;
+    }
+
+    public void put(T value) throws InterruptedException {
+        lock.lock();
+        try {
+            while (queue.size() == capacity) {
+                notFull.await();
+            }
+            queue.offer(value);
+            notEmpty.signal();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public T take() throws InterruptedException {
+        lock.lock();
+        try {
+            while (queue.isEmpty()) {
+                notEmpty.await();
+            }
+            T value = queue.poll();
+            notFull.signal();
+            return value;
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+```
+
+这个例子里“队列不满”和“队列不空”是两个不同等待条件。`synchronized + wait/notifyAll` 也能做，但只有一个 WaitSet，通常需要 `notifyAll` 唤醒后再竞争判断；`Condition` 可以把等待线程分到不同队列里，表达更清晰，也更容易做精确唤醒。
+
+选择时可以这样记：
+
+- 只是保护共享变量、临界区短、逻辑简单：优先 `synchronized`。
+- 需要“等锁时可以取消”：用 `ReentrantLock.lockInterruptibly()`。
+- 需要“抢不到锁就超时返回”：用 `ReentrantLock.tryLock(timeout, unit)`。
+- 需要公平锁：用 `new ReentrantLock(true)`，但要接受吞吐下降。
+- 需要多个等待条件：用 `ReentrantLock.newCondition()`。
+- 不要为了显得高级而滥用 `ReentrantLock`，它的灵活性是用代码复杂度换来的。
+
+面试表达：
+
+> 两者本质上都是互斥锁，都能保证临界区内操作的原子性和可见性，也都支持可重入。区别在于 synchronized 是语言和 JVM 层面的锁，写法简单、自动释放，适合大部分简单同步场景；ReentrantLock 是 JUC 提供的显式锁，需要手动释放，但能力更强，支持可中断、超时抢锁、公平锁和多个 Condition。工程里我会默认先考虑 synchronized，只有当业务需要控制等待时间、响应中断、公平性或复杂条件队列时，才会选择 ReentrantLock。
+
 ### 15.3 ThreadLocal 原理和风险
 
 > ThreadLocal 的值实际存在线程自己的 ThreadLocalMap 里，key 是 ThreadLocal 弱引用，value 是业务对象。线程池场景下线程会复用，如果用完不 remove，value 可能长期挂在线程上，造成内存泄漏或上下文串数据。使用时建议 try-finally remove。
