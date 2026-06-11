@@ -52,13 +52,13 @@ spring:
       datasource:
         master:
           ## !!!!!MYSQL
-          url: jdbc:mysql://localhost:3306/jeecg-boot-dev?characterEncoding=UTF-8&useUnicode=true&useSSL=false&tinyInt1isBit=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+          url: jdbc:mysql://localhost:3307/jeecg-boot-dev?characterEncoding=UTF-8&useUnicode=true&useSSL=false&tinyInt1isBit=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
           username: root
-          password: 123456
+          password: root
           driver-class-name: com.mysql.cj.jdbc.Driver
   redis:
     database: 0
-    host: 192.168.1.188
+    host: 127.0.0.1
     port: 6379
     password: 'res983'
 jeecg:

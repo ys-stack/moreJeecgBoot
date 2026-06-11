@@ -407,3 +407,17 @@ justauth:
     type: default
     prefix: 'demo::'
     timeout: 1h
+
+# =============================================
+# AI 练习模块配置（你自己写的 practice 包用这个配置）
+# 注册 DeepSeek: https://platform.deepseek.com  充值10元够用一个月
+# 注册后把 API Key 填到下面的 api-key 里
+# =============================================
+practice:
+  ai:
+    base-url: https://api.xiaomimimo.com/v1
+    api-key: sk-cxc5qukuckxbvoqky3xoqjkt8tb3l50go2u1v14glicooc02
+    model-name: mimo-v2.5-pro
+    temperature: 0.7
+    max-tokens: 2048
+    timeout-seconds: 60
