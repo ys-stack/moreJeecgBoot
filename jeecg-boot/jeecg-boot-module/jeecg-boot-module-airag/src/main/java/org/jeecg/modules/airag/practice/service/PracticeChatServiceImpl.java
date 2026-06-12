@@ -7,7 +7,9 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.jeecg.modules.airag.practice.prompt.service.IAiPromptTemplateService;
 import org.jeecg.modules.airag.practice.vo.PracticeChatRequest;
 import org.jeecg.modules.airag.practice.vo.PracticeChatResponse;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -26,7 +28,7 @@ import java.util.concurrent.Executors;
  *
  * 这个类展示了 LangChain4j 调用大模型的基本方式。
  * 对照着看：
- *   - chat() 是最基础的同步调用
+ *   - chat() 是最基础的同步调用（支持模板）
  *   - chatStream() 是流式调用（SSE）
  *   - chatStructured() 是结构化输出（通过 Prompt 约束模型返回 JSON）
  */
@@ -40,6 +42,9 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
     @Value("${practice.ai.model-name:deepseek-chat}")
     private String modelName;
 
+    @Resource
+    private IAiPromptTemplateService iAiPromptTemplateService;
+
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
     public PracticeChatServiceImpl(
@@ -52,20 +57,20 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
     /**
      * 普通聊天 - 同步调用
      *
-     * 核心就三步：
-     * 1. 构建消息列表（system + user）
-     * 2. 调用 chatModel.chat(messages)
-     * 3. 从 ChatResponse 中取出 AiMessage 文本
+     * 构建 system prompt 的优先级：
+     * 1. promptCode 有值 → 从数据库加载模板并渲染变量
+     * 2. systemPrompt 有值 → 直接用传入的文本
+     * 3. 都没有 → 不设 system message，直接发用户问题
      */
     @Override
     public PracticeChatResponse chat(PracticeChatRequest request) {
         String requestId = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         long startTime = System.currentTimeMillis();
 
-        // 1. 构建消息列表
+        // 1. 构建消息列表（内部处理模板加载逻辑）
         List<ChatMessage> messages = buildMessages(request);
 
-        // 2. 调用模型（chat 是 LangChain4j 1.x 的同步方法）
+        // 2. 调用模型
         try {
             ChatResponse chatResponse = chatModel.chat(messages);
             long costMs = System.currentTimeMillis() - startTime;
@@ -96,29 +101,23 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
      * 流式聊天 - SSE 逐字返回
      *
      * 流式输出对用户体验很重要：用户不需要等模型生成完才看到内容。
-     * 这里用 LangChain4j 的 StreamingResponseHandler + Spring 的 SseEmitter 实现。
-     *
-     * 注意：OpenAiStreamingChatModel 的 generate 方法接收 StreamingResponseHandler 回调，
-     * 而不是直接返回 TokenStream（TokenStream 是 AiServices 高级 API 的产物）。
+     * 这里用 LangChain4j 的 StreamingChatResponseHandler + Spring 的 SseEmitter 实现。
      */
     @Override
     public SseEmitter chatStream(PracticeChatRequest request) {
-        SseEmitter emitter = new SseEmitter(120_000L); // 120秒超时
+        SseEmitter emitter = new SseEmitter(120_000L);
         String requestId = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
 
         List<ChatMessage> messages = buildMessages(request);
 
-        // 用异步线程发送，避免阻塞主线程
         executor.execute(() -> {
             try {
                 long startTime = System.currentTimeMillis();
 
-                // chat + StreamingChatResponseHandler 是 LangChain4j 1.x 的流式调用方式
                 streamingChatModel.chat(messages, new StreamingChatResponseHandler() {
 
                     @Override
                     public void onPartialResponse(String token) {
-                        // 每收到一个 token 片段就通过 SSE 推送给前端
                         try {
                             emitter.send(SseEmitter.event()
                                     .name("message")
@@ -133,7 +132,6 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
                         try {
                             long costMs = System.currentTimeMillis() - startTime;
                             log.info("[{}] 流式调用完成 | 耗时={}ms", requestId, costMs);
-                            // 发送结束标记
                             emitter.send(SseEmitter.event().name("done").data(""));
                             emitter.complete();
                         } catch (Exception e) {
@@ -163,51 +161,71 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
     /**
      * 结构化输出 - 通过 Prompt 约束模型返回 JSON
      *
-     * 这是 AI 应用开发中非常重要的技巧：
-     * 不是让模型随便回答，而是要求它按指定 JSON Schema 输出，
-     * 这样程序可以直接解析和使用模型输出。
+     * 改动点（Day3 步骤4）：
+     * - 之前：hardcode 一大段 system prompt 在代码里
+     * - 现在：从 ai_prompt_template 表读取 "structured_analysis" 模板
+     * - 好处：改 prompt 不用改代码、不用重启，直接在数据库改
      */
     @Override
     public PracticeChatResponse chatStructured(PracticeChatRequest request) {
-        String structuredSystemPrompt = """
-                你是一个需求分析助手。用户会输入一段需求描述，请你按以下 JSON 格式输出分析结果：
-                
-                ```json
-                {
-                  "background": "需求背景分析",
-                  "goal": "核心目标",
-                  "apis": [
-                    {"method": "GET/POST", "path": "/api/xxx", "description": "接口说明"}
-                  ],
-                  "tables": [
-                    {"tableName": "表名", "description": "说明", "keyFields": ["字段1", "字段2"]}
-                  ],
-                  "risks": ["风险点1", "风险点2"]
-                }
-                ```
-                
-                注意：
-                1. 必须严格输出 JSON，不要有多余的文字
-                2. APIs 和 tables 至少各一个
-                3. risks 至少列出一个风险点
-                """;
+        // 从数据库加载 structured_analysis 模板，渲染变量后作为 system prompt
+        String systemPrompt = iAiPromptTemplateService.renderTemplate(
+                iAiPromptTemplateService.getActiveByCode("structured_analysis").getId(),
+                request.getTemplateVars()  // 结构化模板当前没有额外变量，传 null 也行
+        );
 
         PracticeChatRequest structuredRequest = new PracticeChatRequest();
         structuredRequest.setMessage(request.getMessage());
-        structuredRequest.setSystemPrompt(structuredSystemPrompt);
+        structuredRequest.setSystemPrompt(systemPrompt);
 
         return chat(structuredRequest);
     }
 
     /**
      * 构建消息列表（公共方法，三个接口都用）
+     *
+     * system prompt 来源优先级：
+     * 1. promptCode → 从 DB 加载模板 + 渲染变量
+     * 2. systemPrompt → 直接用传入文本
+     * 3. 都没有 → 不加 system message
      */
     private List<ChatMessage> buildMessages(PracticeChatRequest request) {
         List<ChatMessage> messages = new ArrayList<>();
-        if (request.getSystemPrompt() != null && !request.getSystemPrompt().isBlank()) {
-            messages.add(new SystemMessage(request.getSystemPrompt()));
+
+        // 决定 system prompt 来源
+        String systemPrompt = resolveSystemPrompt(request);
+        if (systemPrompt != null && !systemPrompt.isBlank()) {
+            messages.add(new SystemMessage(systemPrompt));
         }
+
         messages.add(new UserMessage(request.getMessage()));
         return messages;
+    }
+
+    /**
+     * 解析 system prompt：
+     * - 如果传了 promptCode，从数据库取模板并渲染
+     * - 否则用传入的 systemPrompt 原文
+     */
+    private String resolveSystemPrompt(PracticeChatRequest request) {
+        // 优先使用 promptCode 从数据库加载
+        if (request.getPromptCode() != null && !request.getPromptCode().isBlank()) {
+            try {
+                var template = iAiPromptTemplateService.getActiveByCode(request.getPromptCode());
+                if (template != null) {
+                    String rendered = iAiPromptTemplateService.renderTemplate(
+                            template.getId(), request.getTemplateVars());
+                    log.info("使用模板 [{}] v{} | 渲染后长度={}",
+                            template.getPromptCode(), template.getVersion(), rendered.length());
+                    return rendered;
+                }
+            } catch (Exception e) {
+                log.warn("加载模板失败 [{}]，降级使用 systemPrompt: {}",
+                        request.getPromptCode(), e.getMessage());
+            }
+        }
+
+        // 降级：使用直接传入的 systemPrompt
+        return request.getSystemPrompt();
     }
 }
