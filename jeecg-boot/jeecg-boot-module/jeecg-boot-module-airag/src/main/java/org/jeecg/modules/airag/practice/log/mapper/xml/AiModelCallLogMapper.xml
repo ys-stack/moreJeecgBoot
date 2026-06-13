@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="org.jeecg.modules.airag.practice.log.mapper.AiModelCallLogMapper">
+
+    <!-- 按日期范围统计总体调用数据 -->
+    <select id="statByDateRange" resultType="org.jeecg.modules.airag.practice.log.vo.AiCallStatVO">
+        SELECT
+            COUNT(*)                                                AS callCount,
+            IFNULL(SUM(prompt_tokens), 0)                           AS totalPromptTokens,
+            IFNULL(SUM(completion_tokens), 0)                       AS totalCompletionTokens,
+            IFNULL(SUM(total_tokens), 0)                            AS totalTokens,
+            ROUND(IFNULL(AVG(duration_ms), 0), 2)                   AS avgDurationMs,
+            IFNULL(MAX(duration_ms), 0)                             AS maxDurationMs,
+            IFNULL(MIN(duration_ms), 0)                             AS minDurationMs,
+            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END)    AS successCount,
+            SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END)   AS failCount,
+            ROUND(IFNULL(SUM(cost_estimate), 0), 6)                 AS totalCost
+        FROM ai_model_call_log
+        <where>
+            <if test="startDate != null and startDate != ''">
+                AND create_time &gt;= #{startDate}
+            </if>
+            <if test="endDate != null and endDate != ''">
+                AND create_time &lt; DATE_ADD(#{endDate}, INTERVAL 1 DAY)
+            </if>
+            <if test="userId != null and userId != ''">
+                AND user_id = #{userId}
+            </if>
+        </where>
+    </select>
+
+    <!-- 按模型分组统计 -->
+    <select id="statGroupByModel" resultType="org.jeecg.modules.airag.practice.log.vo.AiCallStatVO">
+        SELECT
+            model_name                                              AS modelName,
+            COUNT(*)                                                AS callCount,
+            IFNULL(SUM(prompt_tokens), 0)                           AS totalPromptTokens,
+            IFNULL(SUM(completion_tokens), 0)                       AS totalCompletionTokens,
+            IFNULL(SUM(total_tokens), 0)                            AS totalTokens,
+            ROUND(IFNULL(AVG(duration_ms), 0), 2)                   AS avgDurationMs,
+            IFNULL(MAX(duration_ms), 0)                             AS maxDurationMs,
+            IFNULL(MIN(duration_ms), 0)                             AS minDurationMs,
+            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END)    AS successCount,
+            SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END)   AS failCount,
+            ROUND(IFNULL(SUM(cost_estimate), 0), 6)                 AS totalCost
+        FROM ai_model_call_log
+        <where>
+            <if test="startDate != null and startDate != ''">
+                AND create_time &gt;= #{startDate}
+            </if>
+            <if test="endDate != null and endDate != ''">
+                AND create_time &lt; DATE_ADD(#{endDate}, INTERVAL 1 DAY)
+            </if>
+        </where>
+        GROUP BY model_name
+        ORDER BY callCount DESC
+    </select>
+
+    <!-- 按天统计调用趋势 -->
+    <select id="statDailyTrend" resultType="org.jeecg.modules.airag.practice.log.vo.AiCallStatVO">
+        SELECT
+            DATE_FORMAT(create_time, '%Y-%m-%d')                    AS statDate,
+            COUNT(*)                                                AS callCount,
+            IFNULL(SUM(total_tokens), 0)                            AS totalTokens,
+            ROUND(IFNULL(AVG(duration_ms), 0), 2)                   AS avgDurationMs,
+            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END)    AS successCount,
+            SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END)   AS failCount,
+            ROUND(IFNULL(SUM(cost_estimate), 0), 6)                 AS totalCost
+        FROM ai_model_call_log
+        <where>
+            <if test="startDate != null and startDate != ''">
+                AND create_time &gt;= #{startDate}
+            </if>
+            <if test="endDate != null and endDate != ''">
+                AND create_time &lt; DATE_ADD(#{endDate}, INTERVAL 1 DAY)
+            </if>
+        </where>
+        GROUP BY DATE_FORMAT(create_time, '%Y-%m-%d')
+        ORDER BY statDate ASC
+    </select>
+
+</mapper>

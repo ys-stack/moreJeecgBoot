@@ -9,6 +9,10 @@ import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.jeecg.modules.airag.practice.aspect.annotation.ModelInvocationLog;
+import org.jeecg.modules.airag.practice.aspect.annotation.RateLimit;
+import org.jeecg.modules.airag.practice.log.entity.AiModelCallLog;
+import org.jeecg.modules.airag.practice.log.service.IAiModelCallLogService;
 import org.jeecg.modules.airag.practice.prompt.service.IAiPromptTemplateService;
 import org.jeecg.modules.airag.practice.vo.PracticeChatRequest;
 import org.jeecg.modules.airag.practice.vo.PracticeChatResponse;
@@ -16,7 +20,6 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -45,6 +48,9 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
     @Resource
     private IAiPromptTemplateService iAiPromptTemplateService;
 
+    @Resource
+    private IAiModelCallLogService aiModelCallLogService;
+
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
     public PracticeChatServiceImpl(
@@ -62,28 +68,38 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
      * 2. systemPrompt 有值 → 直接用传入的文本
      * 3. 都没有 → 不设 system message，直接发用户问题
      */
+    @ModelInvocationLog(async = false)
+    @RateLimit(key = "practice:chat")
     @Override
     public PracticeChatResponse chat(PracticeChatRequest request) {
         String requestId = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         long startTime = System.currentTimeMillis();
 
-        // 1. 构建消息列表（内部处理模板加载逻辑）
         List<ChatMessage> messages = buildMessages(request);
 
-        // 2. 调用模型
         try {
             ChatResponse chatResponse = chatModel.chat(messages);
             long costMs = System.currentTimeMillis() - startTime;
             String content = chatResponse.aiMessage().text();
 
-            log.info("[{}] 模型调用成功 | 模型={} | 耗时={}ms | 回答长度={}",
-                    requestId, modelName, costMs, content.length());
+            // 从模型返回的 usage 中提取真实 token 数（非估算）
+            Integer promptTokens = null;
+            Integer completionTokens = null;
+            if (chatResponse.tokenUsage() != null) {
+                promptTokens = chatResponse.tokenUsage().inputTokenCount();
+                completionTokens = chatResponse.tokenUsage().outputTokenCount();
+            }
+
+            log.info("[{}] 模型调用成功 | 模型={} | 耗时={}ms | tokens={}/{} ",
+                    requestId, modelName, costMs, promptTokens, completionTokens);
 
             return PracticeChatResponse.builder()
                     .content(content)
                     .model(modelName)
                     .costMs(costMs)
                     .requestId(requestId)
+                    .promptTokens(promptTokens)
+                    .completionTokens(completionTokens)
                     .build();
         } catch (Exception e) {
             log.error("[{}] 模型调用失败: {}", requestId, e.getMessage(), e);
@@ -100,9 +116,13 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
     /**
      * 流式聊天 - SSE 逐字返回
      *
-     * 流式输出对用户体验很重要：用户不需要等模型生成完才看到内容。
-     * 这里用 LangChain4j 的 StreamingChatResponseHandler + Spring 的 SseEmitter 实现。
+     * 注意：流式接口方法瞬间返回 SseEmitter，真正的模型调用在后台线程。
+     * 所以不能用 @ModelInvocationLog（AOP 拿不到真实数据），
+     * 改为在 onCompleteResponse / onError 回调里手动记录日志。
+     *
+     * @RateLimit 仍然生效：在返回 SseEmitter 之前，AOP 会先检查限流。
      */
+    @RateLimit(key = "practice:chat")
     @Override
     public SseEmitter chatStream(PracticeChatRequest request) {
         SseEmitter emitter = new SseEmitter(120_000L);
@@ -132,6 +152,8 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
                         try {
                             long costMs = System.currentTimeMillis() - startTime;
                             log.info("[{}] 流式调用完成 | 耗时={}ms", requestId, costMs);
+                            // 手动记录模型调用日志
+                            saveStreamLog(requestId, costMs, response, "success", null);
                             emitter.send(SseEmitter.event().name("done").data(""));
                             emitter.complete();
                         } catch (Exception e) {
@@ -141,7 +163,10 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
 
                     @Override
                     public void onError(Throwable error) {
+                        long costMs = System.currentTimeMillis() - startTime;
                         log.error("[{}] 流式调用异常: {}", requestId, error.getMessage(), error);
+                        // 手动记录失败日志
+                        saveStreamLog(requestId, costMs, null, "fail", error.getMessage());
                         try {
                             emitter.send(SseEmitter.event().name("error")
                                     .data("模型调用异常: " + error.getMessage()));
@@ -159,6 +184,34 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
     }
 
     /**
+     * 流式接口手动记录模型调用日志（AOP 无法捕获异步回调，所以单独处理）
+     */
+    private void saveStreamLog(String requestId, long costMs, ChatResponse response,
+                               String status, String errorMsg) {
+        try {
+            AiModelCallLog callLog = new AiModelCallLog();
+            callLog.setBizType("stream_chat")
+                    .setModelName(modelName)
+                    .setRequestId(requestId)
+                    .setDurationMs(costMs)
+                    .setStatus(status)
+                    .setErrorMsg(errorMsg)
+                    .setCreateTime(new java.util.Date());
+
+            // 从 ChatResponse 提取真实 token
+            if (response != null && response.tokenUsage() != null) {
+                callLog.setPromptTokens(response.tokenUsage().inputTokenCount());
+                callLog.setCompletionTokens(response.tokenUsage().outputTokenCount());
+                callLog.setTotalTokens(response.tokenUsage().totalTokenCount());
+            }
+
+            aiModelCallLogService.save(callLog);
+        } catch (Exception e) {
+            log.warn("[{}] 流式日志记录失败: {}", requestId, e.getMessage());
+        }
+    }
+
+    /**
      * 结构化输出 - 通过 Prompt 约束模型返回 JSON
      *
      * 改动点（Day3 步骤4）：
@@ -166,6 +219,8 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
      * - 现在：从 ai_prompt_template 表读取 "structured_analysis" 模板
      * - 好处：改 prompt 不用改代码、不用重启，直接在数据库改
      */
+    @ModelInvocationLog(scene = "structured_output", async = false)
+    @RateLimit(key = "practice:chat")
     @Override
     public PracticeChatResponse chatStructured(PracticeChatRequest request) {
         // 从数据库加载 structured_analysis 模板，渲染变量后作为 system prompt
