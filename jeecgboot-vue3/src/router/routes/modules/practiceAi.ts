@@ -21,6 +21,15 @@ const practiceAi: AppRouteModule = {
         icon: 'ant-design:bulb-outlined',
       },
     },
+    {
+      path: 'doc-manager',
+      name: 'PracticeDocManager',
+      component: () => import('/@/views/practice/docmanager/index.vue'),
+      meta: {
+        title: '文档管理',
+        icon: 'ant-design:folder-open-outlined',
+      },
+    },
   ],
 };
 
