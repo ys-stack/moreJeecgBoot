@@ -42,6 +42,9 @@ public class DocumentUploadResultVO {
     @Schema(description = "文件存储路径")
     private String filePath;
 
+    @Schema(description = "已向量化入ES的分片数（0表示未向量化）")
+    private Integer vectorizedCount;
+
     @Schema(description = "分片预览（前5条）")
     private List<DocumentChunkVO> chunks;
 }

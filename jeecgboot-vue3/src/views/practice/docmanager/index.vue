@@ -1,12 +1,29 @@
 <template>
   <div class="doc-manager">
-    <!-- 头部 -->
+    <!-- 知识库选择器 + 头部 -->
     <div class="page-header">
       <h1>
         <FileSearchOutlined />
         文档管理
       </h1>
       <p>上传 Markdown 文档，自动解析切分为知识库分片</p>
+      <div class="kb-selector">
+        <span class="selector-label">当前知识库：</span>
+        <a-select
+          v-model:value="currentKbId"
+          placeholder="请选择知识库"
+          style="width: 260px"
+          :loading="kbLoading"
+          @change="onKbChange"
+        >
+          <a-select-option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
+            {{ kb.name }}
+            <template v-if="kb.docCount">
+              <span style="color: #999; margin-left: 4px">({{ kb.docCount }}篇)</span>
+            </template>
+          </a-select-option>
+        </a-select>
+      </div>
     </div>
 
     <!-- 上传区域 -->
@@ -191,6 +208,11 @@ const chunks = ref<ChunkRecord[]>([]);
 const chunkLoading = ref(false);
 const activeChunkKeys = ref<string[]>([]);
 
+// 知识库选择
+const knowledgeBases = ref<{ id: string; name: string; docCount: number }[]>([]);
+const currentKbId = ref<string>('');
+const kbLoading = ref(false);
+
 // ==================== 表格列定义 ====================
 
 const docColumns = [
@@ -208,18 +230,37 @@ const docColumns = [
 
 const API_BASE = '/practice/doc';
 
+async function loadKnowledgeBases() {
+  kbLoading.value = true;
+  try {
+    const kbs = await defHttp.get({ url: `${API_BASE}/kb/list` });
+    knowledgeBases.value = kbs || [];
+    // 如果没有选中的知识库，默认选第一个
+    if (knowledgeBases.value.length > 0 && !currentKbId.value) {
+      currentKbId.value = knowledgeBases.value[0].id;
+      loadDocuments();
+    }
+  } catch (e) {
+    console.error('加载知识库列表失败', e);
+  } finally {
+    kbLoading.value = false;
+  }
+}
+
+function onKbChange() {
+  documents.value = [];
+  loadDocuments();
+}
+
 async function loadDocuments() {
+  if (!currentKbId.value) {
+    documents.value = [];
+    return;
+  }
   docLoading.value = true;
   try {
-    // 先获取知识库列表，再获取每个知识库下的文档
-    const kbs = await defHttp.get({ url: `${API_BASE}/kb/list` });
-    if (kbs && kbs.length > 0) {
-      // 获取第一个知识库的文档（简化处理）
-      const docs = await defHttp.get({ url: `${API_BASE}/kb/${kbs[0].id}/docs` });
-      documents.value = docs || [];
-    } else {
-      documents.value = [];
-    }
+    const docs = await defHttp.get({ url: `${API_BASE}/kb/${currentKbId.value}/docs` });
+    documents.value = docs || [];
   } catch (e) {
     console.error('加载文档列表失败', e);
   } finally {
@@ -230,16 +271,18 @@ async function loadDocuments() {
 async function handleUpload(options: any) {
   const formData = new FormData();
   formData.append('file', options.file);
+  if (currentKbId.value) {
+    formData.append('knowledgeBaseId', currentKbId.value);
+  }
 
   try {
-    const result = await defHttp.post({
-      url: `${API_BASE}/upload`,
-      data: formData,
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    // defHttp.post() 不支持 FormData（cloneDeep 会损坏 FormData，beforeRequestHook 会丢弃它）
+    // 必须用 uploadMyFile()，它绕过 beforeRequestHook 直接调 axiosInstance.request()
+    const result = await defHttp.uploadMyFile(`${API_BASE}/upload`, formData);
     uploadResult.value = result;
     antMessage.success('文档上传并解析成功！');
     loadDocuments();
+    loadKnowledgeBases();
     options.onSuccess(result);
   } catch (e: any) {
     antMessage.error(e?.message || '上传失败');
@@ -282,6 +325,7 @@ async function deleteDocument(docId: string) {
     await defHttp.delete({ url: `${API_BASE}/${docId}` });
     antMessage.success('删除成功');
     loadDocuments();
+    loadKnowledgeBases();
   } catch (e) {
     antMessage.error('删除失败');
   }
@@ -319,7 +363,7 @@ function formatFileSize(bytes: number): string {
 // ==================== 初始化 ====================
 
 onMounted(() => {
-  loadDocuments();
+  loadKnowledgeBases();
 });
 </script>
 
@@ -346,6 +390,19 @@ onMounted(() => {
     color: #8c8c8c;
     font-size: 14px;
     margin: 0;
+  }
+}
+
+.kb-selector {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+
+  .selector-label {
+    font-size: 14px;
+    color: #595959;
+    margin-right: 8px;
+    white-space: nowrap;
   }
 }
 

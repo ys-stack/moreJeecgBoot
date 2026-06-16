@@ -14,6 +14,8 @@ import org.jeecg.modules.airag.practice.doc.parser.MarkdownParser;
 import org.jeecg.modules.airag.practice.doc.service.IAiDocumentChunkService;
 import org.jeecg.modules.airag.practice.doc.vo.DocumentChunkVO;
 import org.jeecg.modules.airag.practice.doc.vo.DocumentUploadResultVO;
+import org.jeecg.modules.airag.practice.vector.service.VectorStoreService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,6 +61,9 @@ public class AiDocumentChunkServiceImpl
 
     @Resource
     private AiKnowledgeBaseMapper aiKnowledgeBaseMapper;
+
+    @Autowired(required = false)
+    private VectorStoreService vectorStoreService;
 
     @Value("${jeecg.path.upload:/opt/upFiles}")
     private String uploadPath;
@@ -136,7 +141,20 @@ public class AiDocumentChunkServiceImpl
         // ========== 8. 更新知识库冗余计数 ==========
         updateKnowledgeBaseCounts(kb.getId());
 
-        // ========== 9. 构建返回结果 ==========
+        // ========== 9. 自动向量化存入 ES（失败不影响上传） ==========
+        int vectorizedCount = 0;
+        if (vectorStoreService != null && !entities.isEmpty()) {
+            try {
+                vectorizedCount = vectorStoreService.vectorizeAndStore(documentId, kb.getId(), entities);
+                doc.setStatus("vectorized");
+                aiDocumentMapper.updateById(doc);
+                log.info("文档自动向量化完成: documentId={}, 向量数={}", documentId, vectorizedCount);
+            } catch (Exception e) {
+                log.warn("文档向量化失败（不影响上传结果）: documentId={}, error={}", documentId, e.getMessage());
+            }
+        }
+
+        // ========== 10. 构建返回结果 ==========
         int totalTokens = chunkVOs.stream().mapToInt(DocumentChunkVO::getTokenCount).sum();
         List<DocumentChunkVO> preview = chunkVOs.stream().limit(5).collect(Collectors.toList());
 
@@ -148,6 +166,7 @@ public class AiDocumentChunkServiceImpl
                 .chunkCount(chunkVOs.size())
                 .totalTokens(totalTokens)
                 .filePath(filePath)
+                .vectorizedCount(vectorizedCount)
                 .chunks(preview)
                 .build();
     }
@@ -165,6 +184,15 @@ public class AiDocumentChunkServiceImpl
     public int deleteDocumentAndChunks(String documentId) {
         // 删除分片
         int deleted = deleteChunksByDocumentId(documentId);
+
+        // 同步删除 ES 中的向量数据（失败不影响删除操作）
+        if (vectorStoreService != null) {
+            try {
+                vectorStoreService.deleteByDocumentId(documentId);
+            } catch (Exception e) {
+                log.warn("ES 向量清理失败（不影响删除结果）: documentId={}, error={}", documentId, e.getMessage());
+            }
+        }
 
         // 删除文档记录
         AiDocument doc = aiDocumentMapper.selectById(documentId);

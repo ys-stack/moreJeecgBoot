@@ -22,6 +22,15 @@ const practiceAi: AppRouteModule = {
       },
     },
     {
+      path: 'knowledge-base',
+      name: 'PracticeKnowledgeBase',
+      component: () => import('/@/views/practice/knowledgebase/index.vue'),
+      meta: {
+        title: '知识库管理',
+        icon: 'ant-design:database-outlined',
+      },
+    },
+    {
       path: 'doc-manager',
       name: 'PracticeDocManager',
       component: () => import('/@/views/practice/docmanager/index.vue'),
