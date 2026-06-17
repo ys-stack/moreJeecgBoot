@@ -116,6 +116,45 @@
       </a-card>
     </div>
 
+    <!-- 向量语义搜索 -->
+    <div class="vector-search-section">
+      <a-card title="向量语义搜索" :bordered="false">
+        <div class="search-bar">
+          <a-input-search
+            v-model:value="searchQuery"
+            placeholder="输入自然语言查询，如：Redis 数据怎么持久化"
+            enter-button="搜索"
+            size="large"
+            :loading="searchLoading"
+            @search="doVectorSearch"
+          />
+          <div class="search-options">
+            <span class="option-label">返回条数：</span>
+            <a-slider v-model:value="topK" :min="1" :max="20" :marks="{ 1: '1', 5: '5', 10: '10', 20: '20' }" style="flex: 1" />
+          </div>
+        </div>
+
+        <!-- 搜索结果 -->
+        <div v-if="searchResults.length > 0" class="search-results">
+          <div class="result-summary">
+            找到 <strong>{{ searchResults.length }}</strong> 条相关分片
+            <span v-if="searchTime">（耗时 {{ searchTime }}ms）</span>
+          </div>
+          <div v-for="(item, idx) in searchResults" :key="item.chunkId" class="result-item">
+            <div class="result-header">
+              <a-tag color="blue">#{{ idx + 1 }}</a-tag>
+              <span class="result-heading">{{ item.headingPath || '（无标题）' }}</span>
+              <a-tag color="orange">{{ (item.score * 100).toFixed(1) }}% 相似</a-tag>
+              <span class="result-source">{{ item.sourceFileName }}</span>
+            </div>
+            <pre class="result-content">{{ item.content }}</pre>
+          </div>
+        </div>
+
+        <a-empty v-else-if="searchDone && searchResults.length === 0" description="未找到相关内容，试试换个问法" style="margin-top: 20px" />
+      </a-card>
+    </div>
+
     <!-- 分片详情抽屉 -->
     <a-drawer
       v-model:visible="drawerVisible"
@@ -197,6 +236,17 @@ interface ChunkRecord {
   chunkType: string;
 }
 
+interface SearchResult {
+  chunkId: string;
+  documentId: string;
+  knowledgeBaseId: string;
+  content: string;
+  headingPath: string;
+  score: number;
+  sourceFileName: string;
+  chunkIndex: number;
+}
+
 // ==================== 状态 ====================
 
 const uploadResult = ref<UploadResult | null>(null);
@@ -212,6 +262,14 @@ const activeChunkKeys = ref<string[]>([]);
 const knowledgeBases = ref<{ id: string; name: string; docCount: number }[]>([]);
 const currentKbId = ref<string>('');
 const kbLoading = ref(false);
+
+// 向量搜索
+const searchQuery = ref('');
+const topK = ref(5);
+const searchLoading = ref(false);
+const searchResults = ref<SearchResult[]>([]);
+const searchDone = ref(false);
+const searchTime = ref(0);
 
 // ==================== 表格列定义 ====================
 
@@ -331,11 +389,45 @@ async function deleteDocument(docId: string) {
   }
 }
 
+// ==================== 向量搜索 ====================
+
+const VECTOR_API = '/practice/vector';
+
+async function doVectorSearch() {
+  if (!searchQuery.value.trim()) {
+    antMessage.warning('请输入查询内容');
+    return;
+  }
+  searchLoading.value = true;
+  searchResults.value = [];
+  searchDone.value = false;
+  const start = Date.now();
+  try {
+    const results = await defHttp.post({
+      url: `${VECTOR_API}/search`,
+      data: {
+        query: searchQuery.value,
+        topK: topK.value,
+        knowledgeBaseId: currentKbId.value || undefined,
+      },
+    });
+    searchResults.value = results || [];
+    searchDone.value = true;
+    searchTime.value = Date.now() - start;
+  } catch (e: any) {
+    antMessage.error(e?.message || '向量检索失败');
+    searchDone.value = true;
+  } finally {
+    searchLoading.value = false;
+  }
+}
+
 // ==================== 工具函数 ====================
 
 function getStatusType(status: string) {
   switch (status) {
     case 'completed': return 'success';
+    case 'vectorized': return 'success';
     case 'pending': return 'processing';
     case 'parsing': return 'processing';
     case 'failed': return 'error';
@@ -346,6 +438,7 @@ function getStatusType(status: string) {
 function getStatusText(status: string) {
   switch (status) {
     case 'completed': return '已完成';
+    case 'vectorized': return '已向量化';
     case 'pending': return '待处理';
     case 'parsing': return '解析中';
     case 'failed': return '失败';
@@ -435,5 +528,85 @@ onMounted(() => {
 
 .empty-chunks {
   padding: 40px 0;
+}
+
+// ==================== 向量搜索样式 ====================
+
+.vector-search-section {
+  margin-bottom: 24px;
+}
+
+.search-bar {
+  .search-options {
+    display: flex;
+    align-items: center;
+    margin-top: 12px;
+    padding: 0 4px;
+
+    .option-label {
+      font-size: 13px;
+      color: #8c8c8c;
+      white-space: nowrap;
+      margin-right: 12px;
+    }
+  }
+}
+
+.search-results {
+  margin-top: 20px;
+
+  .result-summary {
+    font-size: 14px;
+    color: #595959;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #f0f0f0;
+  }
+
+  .result-item {
+    margin-bottom: 16px;
+    padding: 14px;
+    background: #fafafa;
+    border-radius: 8px;
+    border: 1px solid #f0f0f0;
+
+    &:hover {
+      border-color: #d9d9d9;
+      background: #f5f5f5;
+    }
+
+    .result-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+
+      .result-heading {
+        font-weight: 500;
+        font-size: 14px;
+        color: #262626;
+        flex: 1;
+      }
+
+      .result-source {
+        font-size: 12px;
+        color: #bfbfbf;
+      }
+    }
+
+    .result-content {
+      background: #fff;
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 200px;
+      overflow-y: auto;
+      margin: 0;
+      border: 1px solid #f0f0f0;
+    }
+  }
 }
 </style>

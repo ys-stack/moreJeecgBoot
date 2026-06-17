@@ -5,7 +5,6 @@ import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import lombok.extern.slf4j.Slf4j;
 import org.jeecg.modules.airag.practice.vector.config.PracticeVectorConfig;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -32,8 +31,7 @@ public class EmbeddingService {
     private PracticeVectorConfig config;
 
     @Resource
-    @Qualifier("practiceEmbedRestTemplate")
-    private RestTemplate restTemplate;
+    private RestTemplate practiceEmbedRestTemplate;
 
     /**
      * 单条文本 Embedding
@@ -61,11 +59,10 @@ public class EmbeddingService {
             return Collections.emptyList();
         }
 
-        // 构建请求体（OpenAI 兼容格式）
+        // 构建请求体（OpenAI 兼容格式，硅基流动 bge-m3 不支持 dimensions 参数）
         JSONObject requestBody = new JSONObject();
         requestBody.put("model", config.getEmbed().getModelName());
         requestBody.put("input", texts);
-        requestBody.put("dimensions", config.getEmbed().getDimensions());
 
         // 设置请求头
         HttpHeaders headers = new HttpHeaders();
@@ -77,7 +74,7 @@ public class EmbeddingService {
 
         try {
             HttpEntity<String> entity = new HttpEntity<>(requestBody.toJSONString(), headers);
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+            ResponseEntity<String> response = practiceEmbedRestTemplate.exchange(url, HttpMethod.POST, entity, String.class);
 
             if (response.getStatusCode() != HttpStatus.OK || response.getBody() == null) {
                 throw new RuntimeException("Embedding API 返回异常: status=" + response.getStatusCode());

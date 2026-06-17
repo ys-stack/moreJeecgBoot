@@ -4,9 +4,6 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpRequest;
-import org.springframework.http.client.ClientHttpRequestExecution;
-import org.springframework.http.client.ClientHttpRequestInterceptor;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
@@ -70,6 +67,10 @@ public class PracticeVectorConfig {
 
     /**
      * ES 通信用 RestTemplate（自动携带 Basic Auth 认证头）
+     *
+     * 注意：@ConfigurationProperties 属性绑定发生在 Bean 创建之后，
+     * 所以不能在 Bean 方法里用 if 判断属性值——此时属性还没绑定。
+     * 必须把判断逻辑放到拦截器内部（请求时才读取属性值）。
      */
     @Bean("practiceEsRestTemplate")
     public RestTemplate practiceEsRestTemplate() {
@@ -78,21 +79,22 @@ public class PracticeVectorConfig {
         factory.setReadTimeout(es.getReadTimeout());
         RestTemplate rt = new RestTemplate(factory);
 
-        // 添加 Basic Auth 拦截器，所有 ES 请求自动带认证
-        if (es.getUsername() != null && !es.getUsername().isBlank()) {
-            rt.setInterceptors(Collections.singletonList(new ClientHttpRequestInterceptor() {
-                @Override
-                public org.springframework.http.client.ClientHttpResponse intercept(
-                        HttpRequest request, byte[] body, ClientHttpRequestExecution execution)
-                        throws java.io.IOException {
-                    String credentials = es.getUsername() + ":" + es.getPassword();
-                    String encoded = Base64.getEncoder().encodeToString(
-                            credentials.getBytes(StandardCharsets.UTF_8));
-                    request.getHeaders().set("Authorization", "Basic " + encoded);
-                    return execution.execute(request, body);
-                }
-            }));
-        }
+        // 拦截器在每次请求时执行，此时 @ConfigurationProperties 已绑定完成
+        rt.setInterceptors(Collections.singletonList((request, body, execution) -> {
+            String username = es.getUsername();
+            String password = es.getPassword();
+            System.out.println("[ES拦截器] username=" + username + ", password=" + (password != null ? "***" : "null"));
+            if (username != null && !username.isBlank()) {
+                String credentials = username + ":" + password;
+                String encoded = Base64.getEncoder().encodeToString(
+                        credentials.getBytes(StandardCharsets.UTF_8));
+                request.getHeaders().set("Authorization", "Basic " + encoded);
+                System.out.println("[ES拦截器] Authorization 头已添加");
+            } else {
+                System.out.println("[ES拦截器] WARNING: username 为空，未添加认证头！");
+            }
+            return execution.execute(request, body);
+        }));
 
         return rt;
     }

@@ -7,7 +7,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocumentChunk;
 import org.jeecg.modules.airag.practice.vector.config.PracticeVectorConfig;
 import org.jeecg.modules.airag.practice.vector.vo.VectorSearchResultVO;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -37,8 +36,7 @@ public class VectorStoreService {
     private PracticeVectorConfig config;
 
     @Resource
-    @Qualifier("practiceEsRestTemplate")
-    private RestTemplate restTemplate;
+    private RestTemplate practiceEsRestTemplate;
 
     @Resource
     private EmbeddingService embeddingService;
@@ -55,7 +53,7 @@ public class VectorStoreService {
 
         // 检查索引是否存在
         try {
-            ResponseEntity<String> resp = restTemplate.exchange(url, HttpMethod.HEAD, null, String.class);
+            ResponseEntity<String> resp = practiceEsRestTemplate.exchange(url, HttpMethod.HEAD, null, String.class);
             if (resp.getStatusCode() == HttpStatus.OK) {
                 log.info("ES 索引已存在: {}", indexName);
                 return;
@@ -81,13 +79,18 @@ public class VectorStoreService {
         properties.put("chunk_id", typeMapping("keyword"));
         properties.put("document_id", typeMapping("keyword"));
         properties.put("knowledge_base_id", typeMapping("keyword"));
-        properties.put("chunk_text", textMapping("ik_max_word"));
+        properties.put("chunk_text", textMapping("standard"));
         properties.put("chunk_vector", denseVectorMapping());
         properties.put("heading_path", typeMapping("keyword"));
         properties.put("chunk_index", typeMapping("integer"));
         properties.put("chunk_type", typeMapping("keyword"));
         properties.put("source_file_name", typeMapping("keyword"));
-        properties.put("created_at", typeMapping("date"));
+
+        // fastjson 默认将 Date 序列化为 "yyyy-MM-dd HH:mm:ss.SSS" 格式
+        JSONObject createdAtMapping = new JSONObject();
+        createdAtMapping.put("type", "date");
+        createdAtMapping.put("format", "yyyy-MM-dd HH:mm:ss.SSS||yyyy-MM-dd HH:mm:ss||strict_date_optional_time||epoch_millis");
+        properties.put("created_at", createdAtMapping);
 
         JSONObject mappingsWrapper = new JSONObject();
         mappingsWrapper.put("properties", properties);
@@ -98,7 +101,7 @@ public class VectorStoreService {
         HttpEntity<String> entity = new HttpEntity<>(body.toJSONString(), headers);
 
         try {
-            restTemplate.exchange(url, HttpMethod.PUT, entity, String.class);
+            practiceEsRestTemplate.exchange(url, HttpMethod.PUT, entity, String.class);
             log.info("ES 索引创建成功: {}, dims={}", indexName, config.getEmbed().getDimensions());
         } catch (Exception e) {
             log.error("ES 索引创建失败", e);
@@ -156,18 +159,18 @@ public class VectorStoreService {
             doc.put("chunk_index", chunk.getChunkIndex());
             doc.put("chunk_type", chunk.getChunkType());
             doc.put("source_file_name", chunk.getSourceFileName());
-            doc.put("created_at", new Date());
+            doc.put("created_at", new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ").format(new Date()));
             bulkBody.append(doc.toJSONString()).append("\n");
         }
 
-        // 发送 bulk 请求
+        // 发送 bulk 请求（必须指定 UTF-8 编码，否则中文会变成问号）
         String url = "http://" + config.getEs().getClusterNodes() + "/_bulk";
         HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(new MediaType("application", "x-ndjson"));
+        headers.setContentType(new MediaType("application", "x-ndjson", java.nio.charset.StandardCharsets.UTF_8));
         HttpEntity<String> entity = new HttpEntity<>(bulkBody.toString(), headers);
 
         try {
-            ResponseEntity<String> resp = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+            ResponseEntity<String> resp = practiceEsRestTemplate.exchange(url, HttpMethod.POST, entity, String.class);
             JSONObject result = JSON.parseObject(resp.getBody());
 
             if (result.getBooleanValue("errors")) {
@@ -244,7 +247,7 @@ public class VectorStoreService {
         HttpEntity<String> entity = new HttpEntity<>(body.toJSONString(), headers);
 
         try {
-            ResponseEntity<String> resp = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+            ResponseEntity<String> resp = practiceEsRestTemplate.exchange(url, HttpMethod.POST, entity, String.class);
             JSONObject result = JSON.parseObject(resp.getBody());
             JSONObject hits = result.getJSONObject("hits");
 
@@ -304,7 +307,7 @@ public class VectorStoreService {
         HttpEntity<String> entity = new HttpEntity<>(body.toJSONString(), headers);
 
         try {
-            ResponseEntity<String> resp = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+            ResponseEntity<String> resp = practiceEsRestTemplate.exchange(url, HttpMethod.POST, entity, String.class);
             JSONObject result = JSON.parseObject(resp.getBody());
             long deleted = result.getLongValue("deleted");
             log.info("ES 向量删除完成: documentId={}, deleted={}", documentId, deleted);
@@ -335,7 +338,7 @@ public class VectorStoreService {
         HttpEntity<String> entity = new HttpEntity<>(body.toJSONString(), headers);
 
         try {
-            ResponseEntity<String> resp = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+            ResponseEntity<String> resp = practiceEsRestTemplate.exchange(url, HttpMethod.POST, entity, String.class);
             JSONObject result = JSON.parseObject(resp.getBody());
             return result.getLongValue("count");
         } catch (Exception e) {
