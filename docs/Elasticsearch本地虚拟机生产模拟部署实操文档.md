@@ -178,6 +178,7 @@ sudo mkdir -p /data/es-lab/es01/data
 sudo mkdir -p /data/es-lab/es02/data
 sudo mkdir -p /data/es-lab/es03/data
 sudo mkdir -p /data/es-lab/snapshots
+sudo mkdir -p /data/es-lab/kibana/data
 sudo mkdir -p /opt/es-lab
 ```
 
@@ -186,6 +187,7 @@ sudo mkdir -p /opt/es-lab
 ```bash
 sudo chmod -R 777 /data/es-lab
 sudo chown -R $USER:$USER /opt/es-lab
+sudo chown -R 1000:1000 /data/es-lab/kibana/data
 ```
 
 本地学习用 `777` 图省事，生产不能这么粗暴，要按运行用户精确授权。
@@ -244,6 +246,8 @@ cat > .env <<'EOF'
 STACK_VERSION=8.17.0
 CLUSTER_NAME=es-lab
 ES_JAVA_OPTS=-Xms512m -Xmx512m
+ELASTIC_PASSWORD=elastic123
+KIBANA_PASSWORD=kibana123
 EOF
 ```
 
@@ -263,8 +267,13 @@ services:
       - discovery.seed_hosts=es02,es03
       - cluster.initial_master_nodes=es01,es02,es03
       - bootstrap.memory_lock=true
-      - xpack.security.enabled=false
-      - xpack.security.transport.ssl.enabled=false
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - xpack.security.enabled=true
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.security.transport.ssl.key=/usr/share/elasticsearch/config/certs/instance/instance.key
+      - xpack.security.transport.ssl.certificate=/usr/share/elasticsearch/config/certs/instance/instance.crt
+      - xpack.security.transport.ssl.certificate_authorities=/usr/share/elasticsearch/config/certs/ca/ca.crt
       - ES_JAVA_OPTS=${ES_JAVA_OPTS}
       - path.repo=/usr/share/elasticsearch/snapshots
     ulimits:
@@ -277,6 +286,7 @@ services:
     volumes:
       - /data/es-lab/es01/data:/usr/share/elasticsearch/data
       - /data/es-lab/snapshots:/usr/share/elasticsearch/snapshots
+      - ./certs:/usr/share/elasticsearch/config/certs:ro
     ports:
       - "9200:9200"
     networks:
@@ -291,8 +301,13 @@ services:
       - discovery.seed_hosts=es01,es03
       - cluster.initial_master_nodes=es01,es02,es03
       - bootstrap.memory_lock=true
-      - xpack.security.enabled=false
-      - xpack.security.transport.ssl.enabled=false
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - xpack.security.enabled=true
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.security.transport.ssl.key=/usr/share/elasticsearch/config/certs/instance/instance.key
+      - xpack.security.transport.ssl.certificate=/usr/share/elasticsearch/config/certs/instance/instance.crt
+      - xpack.security.transport.ssl.certificate_authorities=/usr/share/elasticsearch/config/certs/ca/ca.crt
       - ES_JAVA_OPTS=${ES_JAVA_OPTS}
       - path.repo=/usr/share/elasticsearch/snapshots
     ulimits:
@@ -305,6 +320,7 @@ services:
     volumes:
       - /data/es-lab/es02/data:/usr/share/elasticsearch/data
       - /data/es-lab/snapshots:/usr/share/elasticsearch/snapshots
+      - ./certs:/usr/share/elasticsearch/config/certs:ro
     ports:
       - "9201:9200"
     networks:
@@ -319,8 +335,13 @@ services:
       - discovery.seed_hosts=es01,es02
       - cluster.initial_master_nodes=es01,es02,es03
       - bootstrap.memory_lock=true
-      - xpack.security.enabled=false
-      - xpack.security.transport.ssl.enabled=false
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - xpack.security.enabled=true
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.security.transport.ssl.key=/usr/share/elasticsearch/config/certs/instance/instance.key
+      - xpack.security.transport.ssl.certificate=/usr/share/elasticsearch/config/certs/instance/instance.crt
+      - xpack.security.transport.ssl.certificate_authorities=/usr/share/elasticsearch/config/certs/ca/ca.crt
       - ES_JAVA_OPTS=${ES_JAVA_OPTS}
       - path.repo=/usr/share/elasticsearch/snapshots
     ulimits:
@@ -333,8 +354,26 @@ services:
     volumes:
       - /data/es-lab/es03/data:/usr/share/elasticsearch/data
       - /data/es-lab/snapshots:/usr/share/elasticsearch/snapshots
+      - ./certs:/usr/share/elasticsearch/config/certs:ro
     ports:
       - "9202:9200"
+    networks:
+      - es-net
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
+    container_name: kibana
+    depends_on:
+      - es01
+    environment:
+      - SERVER_NAME=kibana
+      - ELASTICSEARCH_HOSTS=http://es01:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+    volumes:
+      - /data/es-lab/kibana/data:/usr/share/kibana/data
+    ports:
+      - "5601:5601"
     networks:
       - es-net
 
@@ -348,29 +387,102 @@ EOF
 
 | 配置项 | 值 | 为什么 |
 | --- | --- | --- |
-| `xpack.security.enabled` | `false` | 学习阶段关闭认证，curl 不用每次带 `-u` 密码 |
-| `xpack.security.transport.ssl` | `false` | 节点间通信也关闭 SSL，简化配置 |
+| `xpack.security.enabled` | `true` | 开启认证，Kibana 连接 ES 需要安全凭据 |
+| `xpack.security.transport.ssl` | `true` | 节点间通信加密，ES 8.x 多节点集群强制要求 |
+| `verification_mode` | `certificate` | 只验证证书有效性，不校验主机名（Docker 内部用容器名通信） |
+| `ELASTIC_PASSWORD` | `elastic123` | elastic 超级用户密码，Kibana 和 curl 都用 |
 | `bootstrap.memory_lock` | `true` | 锁住 JVM heap 不被 swap 到磁盘，避免性能抖动 |
 | `ES_JAVA_OPTS` | `-Xms512m -Xmx512m` | 每节点 512MB，3 节点共 1.5GB，虚拟机友好 |
 | `discovery.seed_hosts` | 其他两个节点 | 节点互相发现，组建集群 |
 | `cluster.initial_master_nodes` | 全部三个 | 首次启动时三个节点都有资格当选 master |
 | `path.repo` | snapshots 目录 | 支持快照备份功能 |
 
-生产环境不要照搬关闭安全配置，至少要开 HTTPS + 密码认证。
+生产环境不要照搬实验室配置，至少还要开 HTTPS（HTTP 层 SSL）+ 独立 CA 签发的证书。
 
-### 5.2 为什么先不装 Kibana
+### 5.2 Kibana 说明
 
-学习阶段用 curl 和 Java 客户端调试足够了。Kibana 镜像约 1GB，启动后额外占内存，虚拟机资源有限。后面如果需要可视化查看向量数据分布或做故障演练的 Dashboard，再加一行 Kibana 服务就行。
+Kibana 已集成到 docker-compose.yml 中。Kibana 镜像约 1GB，启动后额外占 300~500MB 内存。你的虚拟机 12GB 内存完全扛得住。启动后访问 `http://虚拟机IP:5601`，用 `elastic` / `elastic123` 登录。
 
 ---
 
-## 六、启动 3 节点 ES 集群
+## 5.5 生成节点间通信证书
+
+ES 8.x 开启安全认证后，多节点集群**强制要求**节点间通信使用 SSL 加密。需要在启动前生成 CA 和节点证书：
+
+```bash
+cd /opt/es-lab
+
+# 1. 创建证书目录
+mkdir -p certs
+
+# 2. 生成 CA（直接回车跳过密码保护）
+docker run --rm -v $(pwd)/certs:/certs \
+  docker.elastic.co/elasticsearch/elasticsearch:8.17.0 \
+  bin/elasticsearch-certutil ca --silent --pem -out /certs/elastic-stack-ca.zip
+
+# 3. 解压 CA 证书（下一步要用 CA 签发节点证书，必须先解压）
+unzip -o certs/elastic-stack-ca.zip -d certs/
+
+# 4. 用 CA 生成节点证书（直接回车跳过密码保护）
+docker run --rm -v $(pwd)/certs:/certs \
+  docker.elastic.co/elasticsearch/elasticsearch:8.17.0 \
+  bin/elasticsearch-certutil cert --silent --pem \
+  -ca-cert /certs/ca/ca.crt \
+  -ca-key /certs/ca/ca.key \
+  -out /certs/elastic-certificates.zip
+
+# 5. 解压节点证书
+unzip -o certs/elastic-certificates.zip -d certs/
+```
+
+执行完毕后 `certs/` 目录下应该有这些文件：
+
+```
+certs/
+├── ca/
+│   ├── ca.crt
+│   └── ca.key
+└── instance/
+    ├── instance.crt
+    └── instance.key
+```
+
+> **说明**：这里用的是 PEM 格式的证书，三个节点共用同一套证书。`verification_mode=certificate` 只验证证书有效性，不校验主机名，所以在 Docker 容器间通信没有问题。
+
+---
+
+## 六、启动 3 节点 ES + Kibana
+
+> **重要**：如果之前启动失败留下了数据，必须先清理再启动，否则旧数据和新的安全配置冲突：
+>
+> ```bash
+> # 停掉所有容器（包括之前跑不起来的）
+> docker compose down
+> # 清理旧数据（首次部署跳过此步）
+> sudo rm -rf /data/es-lab/es01/data/* /data/es-lab/es02/data/* /data/es-lab/es03/data/*
+> ```
 
 启动三个 ES 节点：
 
 ```bash
 cd /opt/es-lab
-docker compose up -d
+docker compose up -d es01 es02 es03
+```
+
+等 ES 集群就绪后，设置 Kibana 系统用户密码并启动 Kibana：
+
+```bash
+# 等待约 30 秒，确认 ES 集群已启动
+sleep 30
+
+# 设置 kibana_system 用户密码
+curl -u elastic:elastic123 -X POST \
+  "http://localhost:9200/_security/user/kibana_system/_password" \
+  -H "Content-Type: application/json" \
+  -d '{"password":"kibana123"}'
+
+# 启动 Kibana
+docker compose up -d kibana
 ```
 
 三个容器会同时启动，互相发现、选举 master、分配分片。这个过程大约 20~30 秒。
@@ -407,7 +519,7 @@ docker compose ps
 ### 7.1 查看基础信息
 
 ```bash
-curl http://localhost:9200?pretty
+curl -u elastic:elastic123 http://localhost:9200?pretty
 ```
 
 返回集群信息，确认 `version.number` 是 `8.17.0`，`cluster_name` 是 `es-lab`。
@@ -415,7 +527,7 @@ curl http://localhost:9200?pretty
 ### 7.2 查看健康状态
 
 ```bash
-curl "http://localhost:9200/_cluster/health?pretty"
+curl -u elastic:elastic123 "http://localhost:9200/_cluster/health?pretty"
 ```
 
 期望：
@@ -433,7 +545,7 @@ curl "http://localhost:9200/_cluster/health?pretty"
 ### 7.3 查看节点
 
 ```bash
-curl "http://localhost:9200/_cat/nodes?v"
+curl -u elastic:elastic123 "http://localhost:9200/_cat/nodes?v"
 ```
 
 应该看到 es01、es02、es03 三个节点，带 `*` 号的是当前 master。
@@ -441,7 +553,7 @@ curl "http://localhost:9200/_cat/nodes?v"
 ### 7.4 查看分片
 
 ```bash
-curl "http://localhost:9200/_cat/shards?v"
+curl -u elastic:elastic123 "http://localhost:9200/_cat/shards?v"
 ```
 
 初始没有自定义索引时，只会看到系统索引（`.security` 等）的分片。
@@ -471,7 +583,7 @@ product_search_v2
 ### 8.1 创建索引
 
 ```bash
-curl \
+curl -u elastic:elastic123 \
   -X PUT "http://localhost:9200/product_search_v1" \
   -H "Content-Type: application/json" \
   -d '{
@@ -504,7 +616,7 @@ curl \
 ### 8.2 创建读写别名
 
 ```bash
-curl \
+curl -u elastic:elastic123 \
   -X POST "http://localhost:9200/_aliases" \
   -H "Content-Type: application/json" \
   -d '{
@@ -518,7 +630,7 @@ curl \
 查看：
 
 ```bash
-curl "http://localhost:9200/_cat/aliases?v"
+curl -u elastic:elastic123 "http://localhost:9200/_cat/aliases?v"
 ```
 
 ---
@@ -528,7 +640,7 @@ curl "http://localhost:9200/_cat/aliases?v"
 ### 9.1 单条写入
 
 ```bash
-curl \
+curl -u elastic:elastic123 \
   -X POST "http://localhost:9200/product_search_write/_doc/10001" \
   -H "Content-Type: application/json" \
   -d '{
@@ -552,7 +664,7 @@ cat > products.ndjson <<'EOF'
 { "id": "10003", "title": "RocketMQ 分布式消息系统", "brand": "tech-book", "categoryId": "book", "price": 8900, "status": "ON_SALE", "createdAt": "2026-05-09T12:00:00" }
 EOF
 
-curl \
+curl -u elastic:elastic123 \
   -X POST "http://localhost:9200/_bulk" \
   -H "Content-Type: application/x-ndjson" \
   --data-binary @products.ndjson
@@ -561,7 +673,7 @@ curl \
 ### 9.3 查询
 
 ```bash
-curl \
+curl -u elastic:elastic123 \
   -X POST "http://localhost:9200/product_search_read/_search?pretty" \
   -H "Content-Type: application/json" \
   -d '{
@@ -593,7 +705,7 @@ ES 8.x 支持 dense_vector 字段和 kNN 搜索，可以用于 RAG 场景的向�
 ### 10.1 创建向量索引
 
 ```bash
-curl \
+curl -u elastic:elastic123 \
   -X PUT "http://localhost:9200/knowledge_chunks" \
   -H "Content-Type: application/json" \
   -d '{
@@ -633,7 +745,7 @@ curl \
 实际场景中向量由 Embedding API 生成，这里用模拟数据演示写入格式：
 
 ```bash
-curl \
+curl -u elastic:elastic123 \
   -X POST "http://localhost:9200/knowledge_chunks/_doc/chunk_001" \
   -H "Content-Type: application/json" \
   -d '{
@@ -652,7 +764,7 @@ curl \
 ### 10.3 kNN 向量搜索
 
 ```bash
-curl \
+curl -u elastic:elastic123 \
   -X POST "http://localhost:9200/knowledge_chunks/_search?pretty" \
   -H "Content-Type: application/json" \
   -d '{
@@ -672,7 +784,7 @@ curl \
 生产里通常把 kNN 和传统 query 组合使用：
 
 ```bash
-curl \
+curl -u elastic:elastic123 \
   -X POST "http://localhost:9200/knowledge_chunks/_search?pretty" \
   -H "Content-Type: application/json" \
   -d '{
@@ -771,18 +883,11 @@ public class ProductSearchSyncConsumer {
       - es-net
 ```
 
-然后在 `.env` 里加 `KIBANA_PASSWORD` 并设置密码（开启安全认证时），启动：
+然后在 `.env` 里加 `KIBANA_PASSWORD` 并设置密码（开启安全认证时）。Kibana 的密码设置和启动已在第六节完成（ES 集群启动后统一操作），这里不再重复。
 
-```bash
-# 需要先创建 kibana data 目录
-sudo mkdir -p /data/es-lab/kibana/data
-sudo chmod -R 777 /data/es-lab/kibana
+> **说明**：`kibana_system` 是 ES 内置的服务账号，专门给 Kibana 连接 ES 使用，权限有限，不能用于其他 API 操作。密码需要和 `.env` 里的 `KIBANA_PASSWORD` 保持一致。
 
-# 启动 Kibana
-docker compose up -d kibana
-```
-
-访问 `http://虚拟机IP:5601`，常用功能：
+访问 `http://虚拟机IP:5601`，用 `elastic` / `elastic123` 登录，常用功能：
 
 - Dev Tools：执行 DSL 查询
 - Stack Management：看索引、分片、快照
@@ -795,7 +900,7 @@ docker compose up -d kibana
 ### 13.1 注册快照仓库
 
 ```bash
-curl \
+curl -u elastic:elastic123 \
   -X PUT "http://localhost:9200/_snapshot/local_backup" \
   -H "Content-Type: application/json" \
   -d '{
@@ -809,14 +914,14 @@ curl \
 ### 13.2 创建快照
 
 ```bash
-curl \
+curl -u elastic:elastic123 \
   -X PUT "http://localhost:9200/_snapshot/local_backup/snapshot_001?wait_for_completion=true"
 ```
 
 ### 13.3 查看快照
 
 ```bash
-curl \
+curl -u elastic:elastic123 \
   "http://localhost:9200/_snapshot/local_backup/_all?pretty"
 ```
 
@@ -844,9 +949,9 @@ docker stop es02
 观察集群变化：
 
 ```bash
-curl "http://localhost:9200/_cluster/health?pretty"
-curl "http://localhost:9200/_cat/nodes?v"
-curl "http://localhost:9200/_cat/shards?v"
+curl -u elastic:elastic123 "http://localhost:9200/_cluster/health?pretty"
+curl -u elastic:elastic123 "http://localhost:9200/_cat/nodes?v"
+curl -u elastic:elastic123 "http://localhost:9200/_cat/shards?v"
 ```
 
 你应该看到：
@@ -877,7 +982,7 @@ ES 对磁盘水位很敏感，磁盘使用率超过 85% 会停止分配新分片
 ### 14.3 模拟深分页查询
 
 ```bash
-curl \
+curl -u elastic:elastic123 \
   -X POST "http://localhost:9200/product_search_read/_search?pretty" \
   -H "Content-Type: application/json" \
   -d '{
@@ -914,7 +1019,7 @@ sudo sysctl --system
 查看分配原因：
 
 ```bash
-curl "http://localhost:9200/_cluster/allocation/explain?pretty"
+curl -u elastic:elastic123 "http://localhost:9200/_cluster/allocation/explain?pretty"
 ```
 
 ### 15.3 容器启动失败

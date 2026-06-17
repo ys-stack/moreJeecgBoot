@@ -4,8 +4,15 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpRequest;
+import org.springframework.http.client.ClientHttpRequestExecution;
+import org.springframework.http.client.ClientHttpRequestInterceptor;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.Collections;
 
 /**
  * 向量检索配置
@@ -47,10 +54,14 @@ public class PracticeVectorConfig {
      */
     @Data
     public static class EsProperties {
-        /** 集群地址，如 192.168.163.128:9200 */
-        private String clusterNodes = "192.168.163.128:9200";
+        /** 集群地址 */
+        private String clusterNodes = "192.168.234.128:9200";
         /** 索引名称 */
         private String indexName = "practice_knowledge_chunks";
+        /** ES 用户名（开启安全认证时使用） */
+        private String username = "elastic";
+        /** ES 密码 */
+        private String password = "elastic123";
         /** 连接超时毫秒 */
         private int connectTimeout = 5000;
         /** 读取超时毫秒 */
@@ -58,15 +69,32 @@ public class PracticeVectorConfig {
     }
 
     /**
-     * ES 通信用 RestTemplate
-     * 和 JeecgElasticsearchTemplate 风格一致，不引入 ES Java 客户端依赖
+     * ES 通信用 RestTemplate（自动携带 Basic Auth 认证头）
      */
     @Bean("practiceEsRestTemplate")
     public RestTemplate practiceEsRestTemplate() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(es.getConnectTimeout());
         factory.setReadTimeout(es.getReadTimeout());
-        return new RestTemplate(factory);
+        RestTemplate rt = new RestTemplate(factory);
+
+        // 添加 Basic Auth 拦截器，所有 ES 请求自动带认证
+        if (es.getUsername() != null && !es.getUsername().isBlank()) {
+            rt.setInterceptors(Collections.singletonList(new ClientHttpRequestInterceptor() {
+                @Override
+                public org.springframework.http.client.ClientHttpResponse intercept(
+                        HttpRequest request, byte[] body, ClientHttpRequestExecution execution)
+                        throws java.io.IOException {
+                    String credentials = es.getUsername() + ":" + es.getPassword();
+                    String encoded = Base64.getEncoder().encodeToString(
+                            credentials.getBytes(StandardCharsets.UTF_8));
+                    request.getHeaders().set("Authorization", "Basic " + encoded);
+                    return execution.execute(request, body);
+                }
+            }));
+        }
+
+        return rt;
     }
 
     /**
