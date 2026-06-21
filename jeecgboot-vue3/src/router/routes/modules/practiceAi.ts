@@ -39,6 +39,24 @@ const practiceAi: AppRouteModule = {
         icon: 'ant-design:folder-open-outlined',
       },
     },
+    {
+      path: 'batch-parse',
+      name: 'PracticeBatchParse',
+      component: () => import('/@/views/practice/batchparse/index.vue'),
+      meta: {
+        title: '批量解析',
+        icon: 'ant-design:thunderbolt-outlined',
+      },
+    },
+    {
+      path: 'rag-chat',
+      name: 'PracticeRagChat',
+      component: () => import('/@/views/practice/ragchat/index.vue'),
+      meta: {
+        title: 'RAG问答',
+        icon: 'ant-design:message-outlined',
+      },
+    },
   ],
 };
 

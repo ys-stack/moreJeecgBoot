@@ -20,10 +20,15 @@ VALUES ('9000000000000000004', '9000000000000000001', '知识库管理', '/pract
 INSERT INTO sys_permission (id, parent_id, name, url, component, is_route, component_name, redirect, menu_type, perms, perms_type, sort_no, always_show, icon, is_leaf, keep_alive, hidden, hide_tab, description, create_by, create_time, update_by, update_time, del_flag, rule_flag, status, internal_or_external)
 VALUES ('9000000000000000003', '9000000000000000001', '文档管理', '/practice-ai/doc-manager', 'practice/docmanager/index', 1, NULL, NULL, 1, NULL, '1', 3.0, 0, 'ant-design:folder-open-outlined', 1, 0, 0, 0, NULL, 'admin', NOW(), 'admin', NOW(), 0, 0, '1', 0);
 
--- 5. 给 admin 角色授权（角色 ID 替换成你实际查出来的）
+-- 5. 注册子菜单「批量解析」
+INSERT INTO sys_permission (id, parent_id, name, url, component, is_route, component_name, redirect, menu_type, perms, perms_type, sort_no, always_show, icon, is_leaf, keep_alive, hidden, hide_tab, description, create_by, create_time, update_by, update_time, del_flag, rule_flag, status, internal_or_external)
+VALUES ('9000000000000000005', '9000000000000000001', '批量解析', '/practice-ai/batch-parse', 'practice/batchparse/index', 1, NULL, NULL, 1, NULL, '1', 4.0, 0, 'ant-design:thunderbolt-outlined', 1, 0, 0, 0, NULL, 'admin', NOW(), 'admin', NOW(), 0, 0, '1', 0);
+
+-- 6. 给 admin 角色授权（角色 ID 替换成你实际查出来的）
 INSERT INTO sys_role_permission (id, role_id, permission_id)
 VALUES
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000001'),
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000002'),
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000003'),
-    (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000004');
+    (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000004'),
+    (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000005');

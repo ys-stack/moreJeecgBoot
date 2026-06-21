@@ -14,6 +14,7 @@ import org.jeecg.modules.airag.practice.aspect.annotation.RateLimit;
 import org.jeecg.modules.airag.practice.log.entity.AiModelCallLog;
 import org.jeecg.modules.airag.practice.log.service.IAiModelCallLogService;
 import org.jeecg.modules.airag.practice.prompt.service.IAiPromptTemplateService;
+import org.jeecg.modules.airag.practice.threadpool.PracticeThreadPool;
 import org.jeecg.modules.airag.practice.vo.PracticeChatRequest;
 import org.jeecg.modules.airag.practice.vo.PracticeChatResponse;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -23,8 +24,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * 练习用 - AI 聊天服务实现
@@ -51,7 +50,9 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
     @Resource
     private IAiModelCallLogService aiModelCallLogService;
 
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    @Resource
+    @Qualifier("practiceStreamPool")
+    private PracticeThreadPool streamPool;
 
     public PracticeChatServiceImpl(
             @Qualifier("practiceChatModel") OpenAiChatModel chatModel,
@@ -130,7 +131,7 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
 
         List<ChatMessage> messages = buildMessages(request);
 
-        executor.execute(() -> {
+        streamPool.execute(() -> {
             try {
                 long startTime = System.currentTimeMillis();
 

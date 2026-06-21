@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import jakarta.annotation.Resource;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -69,5 +70,38 @@ public class AiKnowledgeBaseServiceImpl
         log.info("删除知识库: kbId={}, 文档数={}", kbId, docs.size());
 
         return docs.size();
+    }
+
+    @Override
+    public List<AiKnowledgeBase> listAccessibleByUser(List<String> userRoleCodes) {
+        // 查出所有 active 状态的知识库
+        List<AiKnowledgeBase> allKbs = this.list(
+                new LambdaQueryWrapper<AiKnowledgeBase>()
+                        .eq(AiKnowledgeBase::getStatus, "active")
+                        .orderByDesc(AiKnowledgeBase::getCreateTime)
+        );
+
+        // 如果用户没有角色，只返回 role_code 为空的知识库
+        if (userRoleCodes == null || userRoleCodes.isEmpty()) {
+            return allKbs.stream()
+                    .filter(kb -> kb.getRoleCode() == null || kb.getRoleCode().isBlank())
+                    .collect(Collectors.toList());
+        }
+
+        // 过滤：role_code 为空 → 所有人可见；否则用户的角色需匹配其中任一
+        return allKbs.stream().filter(kb -> {
+            String roleCode = kb.getRoleCode();
+            if (roleCode == null || roleCode.isBlank()) {
+                return true; // 未设角色限制，所有人可见
+            }
+            // roleCode 是逗号分隔的角色列表，如 "admin,hr,dev"
+            String[] requiredRoles = roleCode.split(",");
+            for (String required : requiredRoles) {
+                if (userRoleCodes.contains(required.trim())) {
+                    return true;
+                }
+            }
+            return false;
+        }).collect(Collectors.toList());
     }
 }

@@ -245,6 +245,7 @@ public class VectorStoreService {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         HttpEntity<String> entity = new HttpEntity<>(body.toJSONString(), headers);
+        log.info(body.toJSONString());
 
         try {
             ResponseEntity<String> resp = practiceEsRestTemplate.exchange(url, HttpMethod.POST, entity, String.class);
@@ -279,6 +280,84 @@ public class VectorStoreService {
 
         } catch (Exception e) {
             log.error("ES 向量检索失败", e);
+            throw new RuntimeException("向量检索失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 向量检索：支持多知识库过滤（权限过滤场景）
+     *
+     * @param query             用户查询文本
+     * @param topK              返回条数
+     * @param knowledgeBaseIds  允许访问的知识库ID列表（为空则搜索全部）
+     * @return 相似分片列表
+     */
+    public List<VectorSearchResultVO> searchByKnowledgeBaseIds(String query, int topK, List<String> knowledgeBaseIds) {
+        // 如果没有知识库限制或列表为空，走原有的全量搜索
+        if (knowledgeBaseIds == null || knowledgeBaseIds.isEmpty()) {
+            return search(query, topK, null);
+        }
+        // 如果只有一个知识库ID，走原有的单ID搜索
+        if (knowledgeBaseIds.size() == 1) {
+            return search(query, topK, knowledgeBaseIds.get(0));
+        }
+
+        ensureIndex();
+        float[] queryVector = embeddingService.embed(query);
+
+        JSONObject body = new JSONObject();
+        JSONObject knn = new JSONObject();
+        knn.put("field", "chunk_vector");
+        knn.put("query_vector", floatArrayToList(queryVector));
+        knn.put("k", topK);
+        knn.put("num_candidates", topK * 10);
+
+        // 多个知识库ID → 使用 terms 过滤
+        JSONObject filter = new JSONObject();
+        JSONObject terms = new JSONObject();
+        terms.put("knowledge_base_id", knowledgeBaseIds);
+        filter.put("terms", terms);
+        knn.put("filter", filter);
+
+        body.put("knn", knn);
+        body.put("_source", List.of("chunk_id", "document_id", "knowledge_base_id",
+                "chunk_text", "heading_path", "chunk_index", "source_file_name"));
+        body.put("size", topK);
+
+        String url = "http://" + config.getEs().getClusterNodes() + "/"
+                + config.getEs().getIndexName() + "/_search";
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpEntity<String> entity = new HttpEntity<>(body.toJSONString(), headers);
+
+        try {
+            ResponseEntity<String> resp = practiceEsRestTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+            JSONObject result = JSON.parseObject(resp.getBody());
+            JSONObject hits = result.getJSONObject("hits");
+            if (hits == null || hits.getJSONArray("hits") == null) {
+                return Collections.emptyList();
+            }
+            List<VectorSearchResultVO> results = new ArrayList<>();
+            JSONArray hitsArray = hits.getJSONArray("hits");
+            for (int i = 0; i < hitsArray.size(); i++) {
+                JSONObject hit = hitsArray.getJSONObject(i);
+                JSONObject source = hit.getJSONObject("_source");
+                float score = hit.getFloatValue("_score");
+                results.add(VectorSearchResultVO.builder()
+                        .chunkId(source.getString("chunk_id"))
+                        .documentId(source.getString("document_id"))
+                        .knowledgeBaseId(source.getString("knowledge_base_id"))
+                        .content(source.getString("chunk_text"))
+                        .headingPath(source.getString("heading_path"))
+                        .score(score)
+                        .sourceFileName(source.getString("source_file_name"))
+                        .chunkIndex(source.getInteger("chunk_index"))
+                        .build());
+            }
+            log.info("多知识库向量检索完成: query='{}', topK={}, KB数={}, 命中={}", query, topK, knowledgeBaseIds.size(), results.size());
+            return results;
+        } catch (Exception e) {
+            log.error("多知识库向量检索失败", e);
             throw new RuntimeException("向量检索失败: " + e.getMessage(), e);
         }
     }

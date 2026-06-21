@@ -26,7 +26,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Date;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
+import org.jeecg.modules.airag.practice.threadpool.PracticeThreadPool;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 /**
  * AI 模型调用日志切面
@@ -41,6 +42,10 @@ public class ModelInvocationLogAspect {
 
     @Resource
     private IAiModelCallLogService aiModelCallLogService;
+
+    @Resource
+    @Qualifier("practiceAsyncPool")
+    private PracticeThreadPool asyncPool;
 
     private static final ExpressionParser PARSER = new SpelExpressionParser();
     private static final DefaultParameterNameDiscoverer NAME_DISCOVERER = new DefaultParameterNameDiscoverer();
@@ -124,7 +129,7 @@ public class ModelInvocationLogAspect {
 
         // 写库
         if (ann.async()) {
-            CompletableFuture.runAsync(() -> safeSave(callLog));
+            asyncPool.execute(() -> safeSave(callLog));
         } else {
             safeSave(callLog);
         }

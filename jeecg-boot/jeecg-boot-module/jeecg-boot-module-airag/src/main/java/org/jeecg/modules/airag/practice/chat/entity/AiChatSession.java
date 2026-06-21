@@ -1,4 +1,4 @@
-package org.jeecg.modules.airag.practice.doc.entity;
+package org.jeecg.modules.airag.practice.chat.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
@@ -15,18 +15,19 @@ import java.io.Serializable;
 import java.util.Date;
 
 /**
- * AI知识库
- * 一个知识库下包含多个文档，文档解析后产生多个分片
+ * AI对话会话
+ * 记录一次对话会话的元信息，关联用户和知识库。
+ * 一个会话包含多条消息（AiChatMessage）。
  *
  * @Author: jeecg-boot
- * @Date: 2026-06-15
+ * @Date: 2026-06-20
  */
 @Data
-@TableName("ai_knowledge_base")
+@TableName("ai_chat_session")
 @EqualsAndHashCode(callSuper = false)
 @Accessors(chain = true)
-@Schema(description = "AI知识库")
-public class AiKnowledgeBase implements Serializable {
+@Schema(description = "AI对话会话")
+public class AiChatSession implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
@@ -34,32 +35,32 @@ public class AiKnowledgeBase implements Serializable {
     @Schema(description = "主键ID")
     private String id;
 
-    @Excel(name = "知识库名称", width = 20)
-    @Schema(description = "知识库名称")
-    private String name;
+    @Excel(name = "会话标题", width = 30)
+    @Schema(description = "会话标题（自动取首条用户消息摘要）")
+    private String title;
 
-    @Excel(name = "描述", width = 30)
-    @Schema(description = "知识库描述")
-    private String description;
+    @Schema(description = "所属用户ID")
+    private String userId;
 
-    @Schema(description = "向量模型ID")
-    private String embedModelId;
+    @Excel(name = "关联知识库", width = 20)
+    @Schema(description = "关联知识库ID（可选）")
+    private String knowledgeBaseId;
 
-    @Excel(name = "状态", width = 12)
-    @Schema(description = "状态（active/inactive）")
+    @Excel(name = "模型供应商", width = 15)
+    @Schema(description = "模型供应商")
+    private String modelProvider;
+
+    @Excel(name = "模型名称", width = 20)
+    @Schema(description = "使用的模型名称")
+    private String modelName;
+
+    @Excel(name = "状态", width = 10)
+    @Schema(description = "状态：active-活跃 / archived-已归档")
     private String status;
 
-    @Excel(name = "可见角色", width = 20)
-    @Schema(description = "可见角色编码（逗号分隔，为空表示所有人可见）")
-    private String roleCode;
-
-    @Excel(name = "文档数量", width = 10)
-    @Schema(description = "文档数量")
-    private Integer docCount;
-
-    @Excel(name = "分片总数", width = 10)
-    @Schema(description = "分片总数")
-    private Integer chunkCount;
+    @Excel(name = "消息数量", width = 10)
+    @Schema(description = "消息数量")
+    private Integer messageCount;
 
     @Schema(description = "扩展元数据JSON")
     private String metadata;
