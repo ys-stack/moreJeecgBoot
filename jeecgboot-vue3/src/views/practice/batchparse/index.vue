@@ -6,13 +6,27 @@
         <FolderOpenOutlined />
         批量解析文档
       </h1>
-      <p>选择文件夹，批量解析 Markdown / TXT / PDF / DOCX 文档并查看切分结果</p>
+      <p>选择知识库和文件夹，批量解析 Markdown / TXT / PDF / DOCX 文档并入库</p>
     </div>
 
     <!-- 操作区 -->
     <a-card title="选择文档" :bordered="false" style="margin-bottom: 16px">
       <div class="action-bar">
         <a-space>
+          <!-- 知识库选择器 -->
+          <a-select
+            v-model:value="knowledgeBaseId"
+            placeholder="选择目标知识库"
+            style="width: 220px"
+            :loading="kbLoading"
+            show-search
+            :filter-option="filterKbOption"
+          >
+            <a-select-option v-for="kb in kbList" :key="kb.id" :value="kb.id">
+              {{ kb.name }}
+            </a-select-option>
+          </a-select>
+
           <a-button type="primary" @click="triggerFolderSelect">
             <FolderOpenOutlined /> 选择文件夹
           </a-button>
@@ -28,11 +42,12 @@
           />
           <a-button
             v-if="selectedFiles.length > 0"
+            type="primary"
             :loading="parsing"
-            :disabled="selectedFiles.length === 0"
+            :disabled="!knowledgeBaseId || selectedFiles.length === 0"
             @click="startBatchParse"
           >
-            <ThunderboltOutlined /> 开始解析（{{ selectedFiles.length }} 个文件）
+            <ThunderboltOutlined /> 开始解析入库（{{ selectedFiles.length }} 个文件）
           </a-button>
         </a-space>
         <a-tag v-if="selectedFiles.length > 0" color="blue">
@@ -71,14 +86,17 @@
         :status="parsing ? 'active' : parseDone ? 'success' : 'normal'"
         :stroke-width="20"
       >
-        <template #format="{ percent }">
-          <span>{{ parsedCount }} / {{ selectedFiles.length }} 文件 ({{ percent }}%)</span>
+        <template #format>
+          <span v-if="parsing">正在解析并入库，请稍候...</span>
+          <span v-else-if="parseDone">
+            完成：成功 {{ successCount }} 个，失败 {{ failedCount }} 个
+          </span>
         </template>
       </a-progress>
     </a-card>
 
     <!-- 解析结果 -->
-    <a-card v-if="parseResults.length > 0" title="解析结果" :bordered="false">
+    <a-card v-if="parseResults.length > 0" title="解析结果（已入库）" :bordered="false">
       <template #extra>
         <a-space>
           <a-tag color="green">成功 {{ successCount }} 个</a-tag>
@@ -144,9 +162,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { FolderOpenOutlined, ThunderboltOutlined } from '@ant-design/icons-vue';
 import { message as antMessage } from 'ant-design-vue';
+import { getToken } from '/@/utils/auth/index';
 
 // ==================== 类型 ====================
 
@@ -169,6 +188,7 @@ interface ChunkData {
 }
 
 interface ParseResult {
+  documentId: string;
   fileName: string;
   fileType: string;
   totalChars: number;
@@ -182,9 +202,14 @@ interface ParseError {
   error: string;
 }
 
+interface KnowledgeBase {
+  id: string;
+  name: string;
+  status: string;
+}
+
 // ==================== 状态 ====================
 
-const PYTHON_API = 'http://localhost:8000';
 const SUPPORTED_EXTS = ['.md', '.markdown', '.txt', '.pdf', '.docx'];
 
 const folderInputRef = ref<HTMLInputElement>();
@@ -192,18 +217,23 @@ const selectedFiles = ref<File[]>([]);
 const fileList = ref<FileItem[]>([]);
 const parsing = ref(false);
 const parseDone = ref(false);
-const parsedCount = ref(0);
 
 const parseResults = ref<ParseResult[]>([]);
 const parseErrors = ref<ParseError[]>([]);
 const activeResultKeys = ref<string[]>([]);
 
+// 知识库相关
+const kbList = ref<KnowledgeBase[]>([]);
+const kbLoading = ref(false);
+const knowledgeBaseId = ref<string>('');
+
 // ==================== 计算属性 ====================
 
 const totalSize = computed(() => selectedFiles.value.reduce((sum, f) => sum + f.size, 0));
-const progressPercent = computed(() =>
-  selectedFiles.value.length > 0 ? Math.round((parsedCount.value / selectedFiles.value.length) * 100) : 0
-);
+const progressPercent = computed(() => {
+  if (!parseDone.value) return parsing.value ? 50 : 0;
+  return 100;
+});
 const successCount = computed(() => parseResults.value.filter((r) => r.chunkCount > 0).length);
 const failedCount = computed(() => parseErrors.value.length);
 const totalChunks = computed(() => parseResults.value.reduce((sum, r) => sum + r.chunkCount, 0));
@@ -216,6 +246,37 @@ const fileColumns = [
   { title: '大小', key: 'size', width: 100 },
   { title: '状态', key: 'status', width: 100 },
 ];
+
+// ==================== 知识库加载 ====================
+
+onMounted(async () => {
+  await loadKbList();
+});
+
+async function loadKbList() {
+  kbLoading.value = true;
+  try {
+    const token = getToken();
+    const res = await fetch('/jeecgboot/practice/kb/listAll', {
+      headers: { 'X-Access-Token': token as string },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.result) {
+        kbList.value = (data.result as KnowledgeBase[]).filter((kb) => kb.status === 'active');
+      }
+    }
+  } catch (e) {
+    console.error('加载知识库列表失败', e);
+  } finally {
+    kbLoading.value = false;
+  }
+}
+
+function filterKbOption(input: string, option: any) {
+  const kb = kbList.value.find((k) => k.id === option.value);
+  return kb ? kb.name.toLowerCase().includes(input.toLowerCase()) : false;
+}
 
 // ==================== 文件夹选择 ====================
 
@@ -251,59 +312,93 @@ function onFolderSelected(e: Event) {
   parseResults.value = [];
   parseErrors.value = [];
   parseDone.value = false;
-  parsedCount.value = 0;
 
   antMessage.success(`已选择 ${files.length} 个文件`);
 }
 
-// ==================== 批量解析 ====================
+// ==================== 批量解析（调 Java 后端） ====================
 
 async function startBatchParse() {
+  if (!knowledgeBaseId.value) {
+    antMessage.warning('请先选择目标知识库');
+    return;
+  }
   if (selectedFiles.value.length === 0) return;
 
   parsing.value = true;
   parseDone.value = false;
   parseResults.value = [];
   parseErrors.value = [];
-  parsedCount.value = 0;
 
-  // 逐个文件请求 Python 服务
-  for (let i = 0; i < selectedFiles.value.length; i++) {
-    const file = selectedFiles.value[i];
-    updateFileStatus(file.name, 'processing', '解析中');
+  // 所有文件标记为解析中
+  fileList.value.forEach((f) => {
+    f.status = 'processing';
+    f.statusText = '解析中';
+  });
 
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
+  try {
+    // 构建 FormData：所有文件 + knowledgeBaseId
+    const formData = new FormData();
+    selectedFiles.value.forEach((f) => formData.append('files', f));
+    formData.append('knowledgeBaseId', knowledgeBaseId.value);
 
-      const res = await fetch(`${PYTHON_API}/parse/file`, {
-        method: 'POST',
-        body: formData,
-      });
+    const token = getToken();
+    const res = await fetch('/jeecgboot/practice/doc/batch/upload', {
+      method: 'POST',
+      headers: { 'X-Access-Token': token as string },
+      body: formData,
+    });
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-        throw new Error(errData.detail || `HTTP ${res.status}`);
-      }
-
-      const data: ParseResult = await res.json();
-      parseResults.value.push(data);
-      updateFileStatus(file.name, 'success', `${data.chunkCount} 分片`);
-    } catch (e: any) {
-      parseErrors.value.push({ fileName: file.name, error: e.message || '未知错误' });
-      updateFileStatus(file.name, 'error', '失败');
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
     }
 
-    parsedCount.value = i + 1;
-  }
+    const data = await res.json();
+    if (!data.success) {
+      throw new Error(data.message || '批量解析失败');
+    }
 
-  parsing.value = false;
-  parseDone.value = true;
+    const result = data.result;
+
+    // 映射成功结果
+    parseResults.value = (result.results || []).map((r: any) => ({
+      documentId: r.documentId,
+      fileName: r.fileName,
+      fileType: r.fileType,
+      totalChars: r.totalChars,
+      chunkCount: r.chunkCount,
+      totalTokens: r.totalTokens,
+      chunks: r.chunks || [],
+    }));
+
+    // 映射错误结果
+    parseErrors.value = (result.errors || []).map((e: any) => ({
+      fileName: e.fileName,
+      error: e.error,
+    }));
+
+    // 更新文件状态
+    (result.results || []).forEach((r: any) => updateFileStatus(r.fileName, 'success', `${r.chunkCount} 分片`));
+    (result.errors || []).forEach((e: any) => updateFileStatus(e.fileName, 'error', '失败'));
+
+  } catch (e: any) {
+    antMessage.error(e?.message || '批量解析请求失败');
+    // 所有文件标记失败
+    fileList.value.forEach((f) => {
+      if (f.status === 'processing') {
+        f.status = 'error';
+        f.statusText = '请求失败';
+      }
+    });
+  } finally {
+    parsing.value = false;
+    parseDone.value = true;
+  }
 
   // 默认展开前 3 个结果
   activeResultKeys.value = parseResults.value.slice(0, 3).map((r) => r.fileName);
 
-  antMessage.success(`解析完成：成功 ${successCount.value}，失败 ${failedCount.value}`);
+  antMessage.success(`解析入库完成：成功 ${successCount.value}，失败 ${failedCount.value}`);
 }
 
 function updateFileStatus(name: string, status: FileItem['status'], text: string) {

@@ -28,6 +28,7 @@ public class PracticeVectorConfig {
 
     private EmbedProperties embed = new EmbedProperties();
     private EsProperties es = new EsProperties();
+    private ParserProperties parser = new ParserProperties();
 
     /**
      * Embedding 模型配置
@@ -63,6 +64,17 @@ public class PracticeVectorConfig {
         private int connectTimeout = 5000;
         /** 读取超时毫秒 */
         private int readTimeout = 30000;
+    }
+
+    /**
+     * Python 文档解析服务配置
+     */
+    @Data
+    public static class ParserProperties {
+        /** 服务地址 */
+        private String url = "http://localhost:8000";
+        /** 读取超时秒数 */
+        private int timeoutSeconds = 120;
     }
 
     /**
@@ -107,6 +119,17 @@ public class PracticeVectorConfig {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(5000);
         factory.setReadTimeout(embed.getTimeoutSeconds() * 1000);
+        return new RestTemplate(factory);
+    }
+
+    /**
+     * Python 文档解析服务调用用 RestTemplate（超时较长）
+     */
+    @Bean("practiceParserRestTemplate")
+    public RestTemplate practiceParserRestTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5000);
+        factory.setReadTimeout(parser.getTimeoutSeconds() * 1000);
         return new RestTemplate(factory);
     }
 }

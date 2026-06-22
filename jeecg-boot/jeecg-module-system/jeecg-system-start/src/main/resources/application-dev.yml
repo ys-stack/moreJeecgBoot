@@ -433,3 +433,6 @@ practice:
     username: elastic
     password: elastic123
     index-name: practice_knowledge_chunks
+  parser:
+    url: http://localhost:8000
+    timeout-seconds: 120
