@@ -24,11 +24,21 @@ VALUES ('9000000000000000003', '9000000000000000001', '文档管理', '/practice
 INSERT INTO sys_permission (id, parent_id, name, url, component, is_route, component_name, redirect, menu_type, perms, perms_type, sort_no, always_show, icon, is_leaf, keep_alive, hidden, hide_tab, description, create_by, create_time, update_by, update_time, del_flag, rule_flag, status, internal_or_external)
 VALUES ('9000000000000000005', '9000000000000000001', '批量解析', '/practice-ai/batch-parse', 'practice/batchparse/index', 1, NULL, NULL, 1, NULL, '1', 4.0, 0, 'ant-design:thunderbolt-outlined', 1, 0, 0, 0, NULL, 'admin', NOW(), 'admin', NOW(), 0, 0, '1', 0);
 
--- 6. 给 admin 角色授权（角色 ID 替换成你实际查出来的）
+-- 6. 注册子菜单「Tool Calling」
+INSERT INTO sys_permission (id, parent_id, name, url, component, is_route, component_name, redirect, menu_type, perms, perms_type, sort_no, always_show, icon, is_leaf, keep_alive, hidden, hide_tab, description, create_by, create_time, update_by, update_time, del_flag, rule_flag, status, internal_or_external)
+VALUES ('9000000000000000006', '9000000000000000001', 'Tool Calling', '/practice-ai/tool-calling', 'practice/toolcalling/index', 1, NULL, NULL, 1, NULL, '1', 6.0, 0, 'ant-design:api-outlined', 1, 0, 0, 0, 'Tool Calling 测试页', 'admin', NOW(), 'admin', NOW(), 0, 0, '1', 0);
+
+-- 7. 注册子菜单「调用日志」
+INSERT INTO sys_permission (id, parent_id, name, url, component, is_route, component_name, redirect, menu_type, perms, perms_type, sort_no, always_show, icon, is_leaf, keep_alive, hidden, hide_tab, description, create_by, create_time, update_by, update_time, del_flag, rule_flag, status, internal_or_external)
+VALUES ('9000000000000000007', '9000000000000000001', '调用日志', '/practice-ai/call-logs', 'practice/calllogs/index', 1, NULL, NULL, 1, NULL, '1', 7.0, 0, 'ant-design:file-text-outlined', 1, 0, 0, 0, '工具调用日志查看', 'admin', NOW(), 'admin', NOW(), 0, 0, '1', 0);
+
+-- 8. 给 admin 角色授权（角色 ID 替换成你实际查出来的）
 INSERT INTO sys_role_permission (id, role_id, permission_id)
 VALUES
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000001'),
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000002'),
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000003'),
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000004'),
-    (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000005');
+    (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000005'),
+    (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000006'),
+    (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000007');

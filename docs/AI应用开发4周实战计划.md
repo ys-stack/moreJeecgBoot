@@ -193,6 +193,80 @@ Python 文档解析 + 整合：
 
 ---
 
+## 阶段总结：第 1-2 周实战回顾（截至 2026-06-22）
+
+### 已完成功能全景
+
+两周内完成了从零到完整的 RAG 知识库问答平台，涉及 50 个 Java 文件、11 个子包，以及一个 Python 文档解析微服务。
+
+**第 1 周：模型 API + Prompt 工程 + 工程治理**
+
+| 功能模块 | 实现内容 | 技术选型 |
+| --- | --- | --- |
+| AI 对话接口 | 同步聊天 `/send`、SSE 流式 `/stream`、结构化输出 `/structured` | LangChain4j + MiMo v2.5-pro（OpenAI 兼容协议） |
+| Prompt 模板管理 | 完整 CRUD，支持 `{变量}` 替换渲染，按 `promptCode` 激活版本 | MySQL + JeecgBoot 代码生成器 |
+| 模型调用日志 | AOP 切面自动记录每次调用：模型名、token 用量、耗时、用户、状态 | 自定义 `@ModelInvocationLog` 注解 + AspectJ + SpEL 表达式 |
+| 限流保护 | 同一用户每分钟 N 次，Redis 不可用时自动降级放行 | `@RateLimit` + Redis Lua 脚本 + fail-open 策略 |
+| 成本统计 | 今日统计、日期范围统计、按模型分组、每日趋势 | AOP 自动采集 + 自定义 SQL 统计查询 |
+| 线程池治理 | 流式任务用 `streamPool`（8-16 线程），异步日志用 `asyncPool`（4-8 线程） | 自定义 `ThreadPoolExecutor` + 原子计数器监控 + 优雅停机 |
+| 结构化输出 | 需求分析助手：输入需求文本 → 输出 JSON（背景、目标、接口、数据表、风险点） | Prompt 约束 + Jackson 校验 |
+
+**第 2 周：RAG 知识库问答全链路**
+
+| 功能模块 | 实现内容 | 技术选型 |
+| --- | --- | --- |
+| 知识库管理 | 创建/编辑/删除知识库，级联删除文档和分片，状态筛选 | Spring Data JPA + JeecgBoot 权限体系 |
+| 文档 Markdown 解析 | 三级降级切分：按 `##` 标题 → 超长段落 → 500 字强制切断，保留标题作为 metadata | 自研 `MarkdownParser`，正则 + 状态机 |
+| Embedding 向量化 | 调用硅基流动 bge-m3 API，1024 维，OpenAI 兼容格式 | `RestTemplate` 直连 + Jackson 解析 |
+| 向量存储与检索 | ES 8.17 三节点 Docker 集群，`dense_vector` + cosine 相似度 + HNSW 索引，kNN 搜索 | ES 原生 REST API，无 Java 客户端依赖，手写 `x-ndjson` 批量写入 |
+| RAG 问答流程 | 8 步流水线：会话管理 → 存用户消息 → 向量检索 → 构建 Prompt（带引用来源）→ 调模型 → 存 AI 回答 → 更新会话 → 返回 | `RagChatService`（584 行），LangChain4j + ES + MiMo 串联 |
+| 多知识库过滤 | 向量检索时按 `knowledgeBaseId` 做 `terms` 过滤，RAG 仅召回指定知识库内容 | ES `bool query` + `terms` filter + kNN |
+| 权限过滤 | 知识库按角色可见（`role_code`），检索前根据 Shiro 用户角色过滤可访问的知识库列表 | JeecgBoot Shiro + 自定义 `listAccessibleByUser()` |
+| 会话管理 | 创建会话、历史列表、消息列表、多轮对话上下文（最近 5 条） | `AiChatSession` + `AiChatMessage` 实体，外键级联 |
+| Python 文档解析服务 | FastAPI 微服务，支持 MD/TXT/PDF/DOCX 四种格式，`/parse/file` 端点返回结构化 JSON | Python 3.12 + FastAPI + python-docx + PyPDF2 |
+| 批量解析前端 | 选择文件夹（`webkitdirectory`），逐文件上传到 Python 服务，实时进度展示 | Vue 3 + fetch 直连 localhost:8000 |
+| 前端知识库管理 | 分页表格、搜索、状态筛选、新增/编辑弹窗、级联删除确认 | JeecgBoot Vue3 脚手架 + defHttp |
+
+### 关键技术收获
+
+**1. 模型调用不是终点，上下文管理才是核心**
+
+模型 API 本身很简单——一个 HTTP POST 就搞定了。真正的工程难点在于：给模型传什么上下文（Prompt 怎么写）、上下文从哪来（RAG 检索）、上下文是否安全（权限过滤）、上下文够不够（token 预算）。这就像写 SQL 不难，难的是设计表结构和索引。
+
+**2. RAG 的"地基层"在 Embedding 和切分策略**
+
+检索效果好不好，80% 取决于文档怎么切和向量怎么存。按标题切分 + 保留层级 metadata 比固定长度切分效果好很多，因为检索到的 chunk 自带语义边界。Embedding 模型选型也关键：bge-m3 的中文语义理解比通用模型好，而且 API 兼容 OpenAI 格式，迁移成本低。
+
+**3. AOP 是 AI 应用治理的利器**
+
+模型调用日志、限流、成本统计这些横切关注点，用 AOP 切面实现比在每个 Service 方法里手写 try-finally 优雅得多。`@ModelInvocationLog` 配合 SpEL 表达式支持动态属性，可以在不侵入业务代码的前提下记录"谁、什么时候、用了哪个模型、花了多少 token"。这个模式后续做 Tool Calling 审计可以直接复用。
+
+**4. 向量检索不是"调一下 ES 就完事"**
+
+ES 的 `dense_vector` 字段 + kNN 搜索需要处理很多细节：索引 mapping 必须声明 `dims` 和 `similarity`；批量写入时 body 是 `x-ndjson` 格式（不是普通 JSON 数组）；kNN 查询和 `bool filter` 组合时要注意 ES 版本差异（8.x 的 `knn` 语法和 7.x 完全不同）。另外，不用 ES Java High Level Client 直接写 HTTP 调用，虽然啰嗦但完全可控，不受 ES 版本升级影响。
+
+**5. Spring 配置的时序陷阱**
+
+`@ConfigurationProperties` 属性绑定发生在 Bean 初始化之后，如果在 `@Bean` 方法里用 `if` 判断属性值来决定是否注册拦截器，看到的永远是默认值（null/false）。正确的做法是把判断逻辑延迟到运行时——比如放在拦截器的 lambda 里。这个问题会导致"配置明明写了但就是不生效"的诡异 bug。
+
+**6. 跨语言服务协作的现实**
+
+Java 做文档解析（尤其 PDF/DOCX）远不如 Python 方便。架构上把文档解析拆成独立 Python 微服务是对的，但要注意：前端不能通过 `defHttp` 调 Python 服务（`defHttp` 自动加 `/jeecgboot` 前缀），必须用原生 `fetch`；跨域 CORS 要在 FastAPI 侧显式配置；服务的 Docker 化和健康检查也要一并考虑。
+
+**7. 线程池不是随便 new 一个就行的**
+
+AI 应用的线程模型和普通 CRUD 不同：流式 SSE 连接是长连接，会长期占用线程；异步写日志虽然快但不能阻塞主流程。所以必须拆成两个独立线程池，并且加上优雅停机（`awaitTermination`）和监控（已完成任务数、活跃线程数），否则服务关闭时连接会粗暴断开，日志可能丢失。
+
+### 面试话术参考
+
+如果被问到"你做过什么 AI 相关的项目"，可以这样组织回答：
+
+> 我在现有 Spring Boot 项目基础上从零搭建了一套 RAG 知识库问答平台。全链路是：文档上传后由 Python 服务解析，Java 端按标题层级切分，调用硅基流动 bge-m3 生成 1024 维向量，写入 Elasticsearch 8.x 的 dense_vector 索引。用户提问时先向量检索 topK，带上知识库权限过滤，再把检索到的 chunk 拼进 Prompt 让 MiMo 模型基于资料回答，回答带引用来源。工程治理上做了 Prompt 版本管理、AOP 驱动的模型调用审计日志、基于 Redis Lua 的限流、自定义线程池和成本统计面板。目前支持多知识库、多轮对话、角色权限过滤。
+
+如果被追问"有什么坑"，可以挑上面 7 条收获里最熟悉的 2-3 条展开讲（推荐：配置时序陷阱、切分策略对检索效果的影响、ES 原生 HTTP 调用的取舍）。
+
+---
+
 ## 第 3 周：Tool Calling + Agent
 
 目标：让 AI 能查订单、查用户、创建工单，从"问答机器人"变成"业务助手"。
