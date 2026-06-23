@@ -32,7 +32,11 @@ VALUES ('9000000000000000006', '9000000000000000001', 'Tool Calling', '/practice
 INSERT INTO sys_permission (id, parent_id, name, url, component, is_route, component_name, redirect, menu_type, perms, perms_type, sort_no, always_show, icon, is_leaf, keep_alive, hidden, hide_tab, description, create_by, create_time, update_by, update_time, del_flag, rule_flag, status, internal_or_external)
 VALUES ('9000000000000000007', '9000000000000000001', '调用日志', '/practice-ai/call-logs', 'practice/calllogs/index', 1, NULL, NULL, 1, NULL, '1', 7.0, 0, 'ant-design:file-text-outlined', 1, 0, 0, 0, '工具调用日志查看', 'admin', NOW(), 'admin', NOW(), 0, 0, '1', 0);
 
--- 8. 给 admin 角色授权（角色 ID 替换成你实际查出来的）
+-- 8. 注册子菜单「线程池监控」
+INSERT INTO sys_permission (id, parent_id, name, url, component, is_route, component_name, redirect, menu_type, perms, perms_type, sort_no, always_show, icon, is_leaf, keep_alive, hidden, hide_tab, description, create_by, create_time, update_by, update_time, del_flag, rule_flag, status, internal_or_external)
+VALUES ('9000000000000000008', '9000000000000000001', '线程池监控', '/practice-ai/threadpool-monitor', 'practice/threadpoolmonitor/index', 1, NULL, NULL, 1, NULL, '1', 8.0, 0, 'ant-design:dashboard-outlined', 1, 0, 0, 0, '线程池运行状态监控', 'admin', NOW(), 'admin', NOW(), 0, 0, '1', 0);
+
+-- 9. 给 admin 角色授权（角色 ID 替换成你实际查出来的）
 INSERT INTO sys_role_permission (id, role_id, permission_id)
 VALUES
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000001'),
@@ -41,4 +45,5 @@ VALUES
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000004'),
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000005'),
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000006'),
-    (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000007');
+    (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000007'),
+    (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000008');

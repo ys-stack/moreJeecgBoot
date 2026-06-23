@@ -57,6 +57,15 @@ const practiceAi: AppRouteModule = {
         icon: 'ant-design:message-outlined',
       },
     },
+    {
+      path: 'threadpool-monitor',
+      name: 'PracticeThreadPoolMonitor',
+      component: () => import('/@/views/practice/threadpoolmonitor/index.vue'),
+      meta: {
+        title: '线程池监控',
+        icon: 'ant-design:dashboard-outlined',
+      },
+    },
   ],
 };
 

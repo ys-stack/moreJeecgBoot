@@ -3,13 +3,13 @@ package org.jeecg.modules.airag.practice.doc.service;
 import lombok.extern.slf4j.Slf4j;
 import org.jeecg.modules.airag.practice.doc.dto.PythonParseResult;
 import org.jeecg.modules.airag.practice.vector.config.PracticeVectorConfig;
+import org.jeecg.modules.airag.practice.doc.service.BatchParseService.FileUpload;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.multipart.MultipartFile;
 
 import jakarta.annotation.Resource;
 
@@ -35,12 +35,12 @@ public class DocParserClient {
     /**
      * 调用 Python 服务解析单个文件
      *
-     * @param file 上传的文件
+     * @param file 文件数据（字节数组，已在 HTTP 线程预读取）
      * @return 解析结果（包含分片列表）
      */
-    public PythonParseResult parseFile(MultipartFile file) {
+    public PythonParseResult parseFile(FileUpload file) {
         String url = config.getParser().getUrl() + "/parse/file";
-        String fileName = file.getOriginalFilename();
+        String fileName = file.fileName();
 
         try {
             // 构建 multipart 请求体
@@ -50,7 +50,7 @@ public class DocParserClient {
             MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
 
             // 使用 ByteArrayResource 包装文件内容，重写 getFilename() 以传递原始文件名
-            ByteArrayResource resource = new ByteArrayResource(file.getBytes()) {
+            ByteArrayResource resource = new ByteArrayResource(file.content()) {
                 @Override
                 public String getFilename() {
                     return fileName;

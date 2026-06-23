@@ -10,10 +10,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+
 /**
  * 批量文档解析 Controller
  *
  * 前端上传多个文件 → Java 调用 Python 服务解析 → 存入 MySQL + ES → 返回结果
+ *
+ * 注意：在 Controller 层将 MultipartFile 读取为 byte[]，
+ * 避免异步线程中 MultipartFile 的流/临时文件已被 Spring 清理导致卡死。
  *
  * @Author: jeecg-boot
  * @Date: 2026-06-22
@@ -40,8 +45,22 @@ public class BatchParseController {
         log.info("批量解析请求: 文件数={}, knowledgeBaseId={}", files.length, knowledgeBaseId);
 
         try {
-            BatchParseResultVO result = batchParseService.batchUploadAndParse(files, knowledgeBaseId);
+            // 在 HTTP 请求线程内先把文件内容读成 byte[]，避免异步线程中 MultipartFile 失效
+            BatchParseService.FileUpload[] uploads = new BatchParseService.FileUpload[files.length];
+            for (int i = 0; i < files.length; i++) {
+                MultipartFile f = files[i];
+                uploads[i] = new BatchParseService.FileUpload(
+                        f.getOriginalFilename(),
+                        f.getBytes(),
+                        f.getSize()
+                );
+            }
+
+            BatchParseResultVO result = batchParseService.batchUploadAndParse(uploads, knowledgeBaseId);
             return Result.OK(result);
+        } catch (IOException e) {
+            log.error("读取上传文件失败", e);
+            return Result.error("读取上传文件失败: " + e.getMessage());
         } catch (Exception e) {
             log.error("批量解析失败", e);
             return Result.error("批量解析失败: " + e.getMessage());

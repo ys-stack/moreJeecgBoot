@@ -11,6 +11,7 @@ import org.jeecg.modules.airag.practice.doc.mapper.AiDocumentChunkMapper;
 import org.jeecg.modules.airag.practice.doc.mapper.AiDocumentMapper;
 import org.jeecg.modules.airag.practice.doc.mapper.AiKnowledgeBaseMapper;
 import org.jeecg.modules.airag.practice.doc.service.BatchParseService;
+import org.jeecg.modules.airag.practice.doc.service.BatchParseService.FileUpload;
 import org.jeecg.modules.airag.practice.doc.service.DocParserClient;
 import org.jeecg.modules.airag.practice.doc.vo.*;
 import org.jeecg.modules.airag.practice.threadpool.PracticeThreadPool;
@@ -19,20 +20,23 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
 
 import jakarta.annotation.Resource;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 /**
  * 批量文档解析服务实现
+ *
+ * 使用 FileUpload（byte[]）而非 MultipartFile，
+ * 避免异步线程中 HTTP 请求已结束导致文件流失效卡死。
  *
  * 流程：
  * 1. 校验知识库
@@ -82,37 +86,59 @@ public class BatchParseServiceImpl implements BatchParseService {
     /** 默认知识库名称 */
     private static final String DEFAULT_KB_NAME = "默认知识库";
 
+    /** 单文件处理超时：5 分钟 */
+    private static final long FILE_TIMEOUT_MINUTES = 5;
+
     @Override
-    public BatchParseResultVO batchUploadAndParse(MultipartFile[] files, String knowledgeBaseId) {
+    public BatchParseResultVO batchUploadAndParse(FileUpload[] files, String knowledgeBaseId) {
         // ========== 1. 校验知识库 ==========
         AiKnowledgeBase kb = getOrCreateKnowledgeBase(knowledgeBaseId);
         String kbId = kb.getId();
 
-        log.info("批量解析开始: 文件数={}, 知识库={}", files.length, kb.getName());
+        log.info("批量解析开始: 文件数={}, 知识库={}, poolState=[core={}, active={}, queue={}]",
+                files.length, kb.getName(),
+                asyncPool.getCorePoolSize(), asyncPool.getActiveCount(), asyncPool.getQueue().size());
 
-        // ========== 2. 并行处理每个文件 ==========
-        List<CompletableFuture<ProcessResult>> futures = new ArrayList<>();
-        for (MultipartFile file : files) {
-            CompletableFuture<ProcessResult> future = CompletableFuture.supplyAsync(
-                    () -> processSingleFile(file, kbId), asyncPool);
+        // ========== 2. 提交任务到线程池（用 submit 而非 CompletableFuture，避免 afterExecute 死锁） ==========
+        List<Future<ProcessResult>> futures = new ArrayList<>(files.length);
+        for (int i = 0; i < files.length; i++) {
+            FileUpload file = files[i];
+            final int index = i + 1;
+            Future<ProcessResult> future = asyncPool.submit(() -> {
+                log.debug("开始处理第 {} 个文件: {}", index, file.fileName());
+                return processSingleFile(file, kbId);
+            });
             futures.add(future);
         }
 
-        // 等待所有文件处理完成
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        log.info("已提交 {} 个任务到线程池, queueSize={}", futures.size(), asyncPool.getQueue().size());
 
-        // ========== 3. 收集结果 ==========
+        // ========== 3. 逐个收集结果（带超时） ==========
         List<SingleFileResultVO> results = new ArrayList<>();
         List<BatchParseErrorVO> errors = new ArrayList<>();
 
-        for (CompletableFuture<ProcessResult> future : futures) {
-            ProcessResult pr = future.join();
-            if (pr.success) {
-                results.add(pr.resultVO);
-            } else {
+        for (int i = 0; i < futures.size(); i++) {
+            try {
+                ProcessResult pr = futures.get(i).get(FILE_TIMEOUT_MINUTES, TimeUnit.MINUTES);
+                if (pr.success) {
+                    results.add(pr.resultVO);
+                } else {
+                    errors.add(BatchParseErrorVO.builder()
+                            .fileName(pr.fileName)
+                            .error(pr.errorMessage)
+                            .build());
+                }
+            } catch (TimeoutException e) {
+                log.error("第 {} 个文件处理超时(>{}min)", i + 1, FILE_TIMEOUT_MINUTES);
                 errors.add(BatchParseErrorVO.builder()
-                        .fileName(pr.fileName)
-                        .error(pr.errorMessage)
+                        .fileName("file#" + (i + 1))
+                        .error("处理超时（" + FILE_TIMEOUT_MINUTES + "min）")
+                        .build());
+            } catch (Exception e) {
+                log.error("第 {} 个文件处理异常: {}", i + 1, e.getMessage());
+                errors.add(BatchParseErrorVO.builder()
+                        .fileName("file#" + (i + 1))
+                        .error(e.getMessage())
                         .build());
             }
         }
@@ -134,8 +160,8 @@ public class BatchParseServiceImpl implements BatchParseService {
      * 处理单个文件：校验 → 建文档记录 → 存文件 → 调Python → 存分片 → 向量化
      * 所有异常在此方法内捕获，不向上抛出
      */
-    private ProcessResult processSingleFile(MultipartFile file, String kbId) {
-        String fileName = file.getOriginalFilename();
+    private ProcessResult processSingleFile(FileUpload file, String kbId) {
+        String fileName = file.fileName();
         ProcessResult pr = new ProcessResult();
         pr.fileName = fileName;
 
@@ -151,7 +177,7 @@ public class BatchParseServiceImpl implements BatchParseService {
                     .setTitle(extractTitle(fileName))
                     .setDocType(detectDocType(fileName))
                     .setFileName(fileName)
-                    .setFileSize(file.getSize())
+                    .setFileSize(file.size())
                     .setStatus("parsing")
                     .setCreateTime(new Date());
             aiDocumentMapper.insert(doc);
@@ -168,7 +194,6 @@ public class BatchParseServiceImpl implements BatchParseService {
             List<AiDocumentChunk> chunkEntities = convertToEntities(
                     parseResult.getChunks(), documentId, fileName, filePath);
             if (!chunkEntities.isEmpty()) {
-                // 逐条插入（非 ServiceImpl 上下文，直接用 mapper）
                 for (AiDocumentChunk chunk : chunkEntities) {
                     aiDocumentChunkMapper.insert(chunk);
                 }
@@ -238,11 +263,11 @@ public class BatchParseServiceImpl implements BatchParseService {
 
     // ==================== 内部方法 ====================
 
-    private void validateFile(MultipartFile file) {
-        if (file == null || file.isEmpty()) {
+    private void validateFile(FileUpload file) {
+        if (file == null || file.content() == null || file.content().length == 0) {
             throw new IllegalArgumentException("上传文件不能为空");
         }
-        String fileName = file.getOriginalFilename();
+        String fileName = file.fileName();
         if (fileName == null || fileName.isBlank()) {
             throw new IllegalArgumentException("文件名不能为空");
         }
@@ -252,9 +277,9 @@ public class BatchParseServiceImpl implements BatchParseService {
             throw new IllegalArgumentException(
                     "仅支持 " + String.join(", ", ALLOWED_EXTENSIONS) + " 文件，当前: " + fileName);
         }
-        if (file.getSize() > MAX_FILE_SIZE) {
+        if (file.size() > MAX_FILE_SIZE) {
             throw new IllegalArgumentException(
-                    "文件大小不能超过 50MB，当前: " + String.format("%.1fMB", file.getSize() / 1024.0 / 1024.0));
+                    "文件大小不能超过 50MB，当前: " + String.format("%.1fMB", file.size() / 1024.0 / 1024.0));
         }
     }
 
@@ -287,14 +312,14 @@ public class BatchParseServiceImpl implements BatchParseService {
         return newKb;
     }
 
-    private String saveOriginalFile(MultipartFile file, String documentId) {
+    private String saveOriginalFile(FileUpload file, String documentId) {
         try {
             Path dir = Paths.get(uploadPath, "practice", "doc", documentId);
             Files.createDirectories(dir);
 
             // webkitdirectory 会把相对路径带进文件名（如 "docs/xxx.md"），
             // 需要提取纯文件名，避免子目录不存在导致 NoSuchFileException
-            String originalName = file.getOriginalFilename();
+            String originalName = file.fileName();
             String safeName = originalName;
             if (originalName != null) {
                 int lastSep = Math.max(originalName.lastIndexOf('/'), originalName.lastIndexOf('\\'));
@@ -304,7 +329,7 @@ public class BatchParseServiceImpl implements BatchParseService {
             }
 
             Path target = dir.resolve(safeName);
-            Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(new ByteArrayInputStream(file.content()), target, StandardCopyOption.REPLACE_EXISTING);
             String relativePath = "practice/doc/" + documentId + "/" + safeName;
             log.info("原始文件已保存: {}", target);
             return relativePath;
