@@ -291,9 +291,21 @@ public class BatchParseServiceImpl implements BatchParseService {
         try {
             Path dir = Paths.get(uploadPath, "practice", "doc", documentId);
             Files.createDirectories(dir);
-            Path target = dir.resolve(file.getOriginalFilename());
+
+            // webkitdirectory 会把相对路径带进文件名（如 "docs/xxx.md"），
+            // 需要提取纯文件名，避免子目录不存在导致 NoSuchFileException
+            String originalName = file.getOriginalFilename();
+            String safeName = originalName;
+            if (originalName != null) {
+                int lastSep = Math.max(originalName.lastIndexOf('/'), originalName.lastIndexOf('\\'));
+                if (lastSep >= 0) {
+                    safeName = originalName.substring(lastSep + 1);
+                }
+            }
+
+            Path target = dir.resolve(safeName);
             Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
-            String relativePath = "practice/doc/" + documentId + "/" + file.getOriginalFilename();
+            String relativePath = "practice/doc/" + documentId + "/" + safeName;
             log.info("原始文件已保存: {}", target);
             return relativePath;
         } catch (IOException e) {
