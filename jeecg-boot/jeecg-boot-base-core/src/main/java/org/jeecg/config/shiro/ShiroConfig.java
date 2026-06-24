@@ -235,6 +235,7 @@ public class ShiroConfig {
         registration.addUrlPatterns("/airag/extData/evaluator/debug");
         // 练习模块 SSE 流式接口
         registration.addUrlPatterns("/practice/chat/stream");
+        registration.addUrlPatterns("/practice/rag/chat/stream");
         registration.addUrlPatterns("/drag/onlDragDatasetHead/generateChartSse");
         registration.addUrlPatterns("/drag/onlDragDatasetHead/updateChartOptSse");
         registration.addUrlPatterns("/drag/onlDragDatasetHead/generateSqlSse");

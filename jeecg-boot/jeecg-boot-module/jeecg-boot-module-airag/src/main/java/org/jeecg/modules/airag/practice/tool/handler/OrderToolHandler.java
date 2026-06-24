@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import jakarta.annotation.Resource;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * 查询订单工具（queryOrder）
@@ -23,6 +24,7 @@ import java.util.List;
 @Slf4j
 @Component("orderToolHandler")
 public class OrderToolHandler implements ToolHandler {
+    private static final Pattern ORDER_CODE_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{1,50}$");
 
     @Resource
     private JeecgOrderMapper jeecgOrderMapper;
@@ -35,6 +37,10 @@ public class OrderToolHandler implements ToolHandler {
         // 参数校验：订单号不能为空
         if (orderCode == null || orderCode.isBlank()) {
             return "{\"error\": \"订单号不能为空，请提供 orderCode 参数\"}";
+        }
+
+        if (!ORDER_CODE_PATTERN.matcher(orderCode).matches()) {
+            return "{\"error\": \"订单号格式非法，只允许字母、数字、下划线和短横线，长度1-50\"}";
         }
 
         log.info("[queryOrder] 查询订单号: {}", orderCode);

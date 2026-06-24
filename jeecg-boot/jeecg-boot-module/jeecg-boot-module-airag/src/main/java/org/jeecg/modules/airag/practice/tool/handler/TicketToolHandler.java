@@ -54,6 +54,12 @@ public class TicketToolHandler implements ToolHandler {
         if (StringUtils.isBlank(description)) {
             return "{\"error\": \"工单描述不能为空\"}";
         }
+        if (title.length() > 200) {
+            return "{\"error\": \"工单标题长度不能超过200\"}";
+        }
+        if (description.length() > 2000) {
+            return "{\"error\": \"工单描述长度不能超过2000\"}";
+        }
 
         // 构建工单实体
         AiWorkTicket ticket = new AiWorkTicket();

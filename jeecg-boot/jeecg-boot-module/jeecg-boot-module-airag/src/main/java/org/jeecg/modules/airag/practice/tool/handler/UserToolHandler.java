@@ -39,6 +39,11 @@ public class UserToolHandler implements ToolHandler {
             return "{\"error\": \"查询关键词不能为空，请提供 keyword 参数（可以是用户名、姓名、工号或手机号）\"}";
         }
 
+        if (keyword.length() > 50) {
+            return "{\"error\": \"查询keyword 参数长度过长\"}";
+        }
+        keyword = keyword.replaceAll("%", "\\%");
+
         keyword = keyword.trim();
         log.info("[queryUser] 查询关键词: {}", keyword);
 
