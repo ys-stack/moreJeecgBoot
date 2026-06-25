@@ -1,17 +1,19 @@
 package org.jeecg.modules.airag.practice.tool.handler;
 
-import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-import org.jeecg.modules.airag.practice.tool.ToolHandler;
+import org.jeecg.modules.airag.practice.tool.cons.ToolCons;
 import org.jeecg.modules.airag.practice.tool.entity.AiWorkTicket;
 import org.jeecg.modules.airag.practice.tool.mapper.AiWorkTicketMapper;
+import org.jeecg.modules.airag.practice.tool.validator.ParamValidator;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.Resource;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 
 import org.apache.shiro.SecurityUtils;
 import org.jeecg.common.system.vo.LoginUser;
@@ -35,31 +37,15 @@ import org.jeecg.common.system.vo.LoginUser;
  */
 @Slf4j
 @Component("ticketToolHandler")
-public class TicketToolHandler implements ToolHandler {
+public class TicketToolHandler extends AbstractToolHandler {
 
     @Resource
     private AiWorkTicketMapper aiWorkTicketMapper;
 
     @Override
-    public String execute(String argumentsJson) {
-        JSONObject args = JSON.parseObject(argumentsJson);
-
+    public String execute(JSONObject args) {
         String title = args.getString("title");
         String description = args.getString("description");
-
-        // 参数校验：标题和描述是必填项
-        if (StringUtils.isBlank(title)) {
-            return "{\"error\": \"工单标题不能为空\"}";
-        }
-        if (StringUtils.isBlank(description)) {
-            return "{\"error\": \"工单描述不能为空\"}";
-        }
-        if (title.length() > 200) {
-            return "{\"error\": \"工单标题长度不能超过200\"}";
-        }
-        if (description.length() > 2000) {
-            return "{\"error\": \"工单描述长度不能超过2000\"}";
-        }
 
         // 构建工单实体
         AiWorkTicket ticket = new AiWorkTicket();
@@ -102,6 +88,46 @@ public class TicketToolHandler implements ToolHandler {
         } else {
             return "{\"success\": false, \"error\": \"工单创建失败，数据库写入异常\"}";
         }
+    }
+
+    @Override
+    protected List<String> validate(JSONObject args) {
+        List<String> errors = new ArrayList<>();
+
+        String title = args.getString("title");
+        String description = args.getString("description");
+        String ticketType = args.getString("ticketType");
+        String priority = args.getString("priority");
+
+        // 必填项
+        errors.addAll(ParamValidator.required("title", title));
+        errors.addAll(ParamValidator.required("description", description));
+
+        // 长度限制
+        if (title != null) {
+            errors.addAll(ParamValidator.maxLength("title", title, 200));
+            errors.addAll(ParamValidator.noInjection("title", title));
+        }
+        if (description != null) {
+            errors.addAll(ParamValidator.maxLength("description", description, 2000));
+        }
+
+        // 枚举校验（非必填，有默认值，但如果传了必须在范围内）
+        if (ticketType != null) {
+            errors.addAll(ParamValidator.inEnum("ticketType", ticketType,
+                    "bug", "feature", "task", "incident"));
+        }
+        if (priority != null) {
+            errors.addAll(ParamValidator.inEnum("priority", priority,
+                    "low", "medium", "high", "urgent"));
+        }
+        return errors;
+    }
+
+
+    @Override
+    protected String getToolCode() {
+        return ToolCons.tool_code_createTicket;
     }
 
     /**

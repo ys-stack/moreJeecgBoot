@@ -2,6 +2,7 @@ package org.jeecg.modules.airag.practice.tool.controller;
 
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.config.shiro.IgnoreAuth;
 import org.jeecg.modules.airag.practice.tool.service.ToolChatService;
@@ -43,14 +44,18 @@ public class ToolChatController {
     @IgnoreAuth
     @PostMapping("/chat")
     public Result<ToolChatResponse> chatWithTools(@RequestBody ToolChatRequest request) {
-        if (request.getMessage() == null || request.getMessage().isBlank()) {
+        if (StringUtils.isBlank(request.getMessage())) {
             return Result.error("message 不能为空");
+        }
+
+        if (StringUtils.isBlank(request.getSessionId())) {
+            return Result.error("sessionId 不能为空");
         }
 
         log.info("[ToolChat] 收到请求: {}", request.getMessage());
 
         try {
-            ToolChatResponse response = toolChatService.chatWithTools(request.getMessage());
+            ToolChatResponse response = toolChatService.chatWithTools(ToolChatRequest request);
             log.info("[ToolChat] 完成 | 轮数={} | 工具调用次数={} | 耗时={}ms",
                     response.getRounds(),
                     response.getToolCalls() != null ? response.getToolCalls().size() : 0,
@@ -70,5 +75,8 @@ public class ToolChatController {
     public static class ToolChatRequest {
         /** 用户输入的问题 */
         private String message;
+        /** 用户输入的问题 */
+        private String SessionId;
+
     }
 }

@@ -4,12 +4,15 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.extern.slf4j.Slf4j;
-import org.jeecg.modules.airag.practice.tool.ToolHandler;
+import org.jeecg.modules.airag.practice.tool.cons.ToolCons;
+import org.jeecg.modules.airag.practice.tool.validator.ParamValidator;
 import org.jeecg.modules.airag.practice.user.entity.PracticeSysUser;
 import org.jeecg.modules.airag.practice.user.mapper.PracticeSysUserMapper;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.Resource;
+
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -24,26 +27,30 @@ import java.util.List;
  */
 @Slf4j
 @Component("userToolHandler")
-public class UserToolHandler implements ToolHandler {
+public class UserToolHandler extends AbstractToolHandler {
 
     @Resource
     private PracticeSysUserMapper practiceSysUserMapper;
 
     @Override
-    public String execute(String argumentsJson) {
-        JSONObject args = JSON.parseObject(argumentsJson);
+    protected List<String> validate(JSONObject args) {
+        List<String> errors = new ArrayList<>();
         String keyword = args.getString("keyword");
 
-        // 参数校验
-        if (keyword == null || keyword.isBlank()) {
-            return "{\"error\": \"查询关键词不能为空，请提供 keyword 参数（可以是用户名、姓名、工号或手机号）\"}";
+        errors.addAll(ParamValidator.required("keyword", keyword));
+        if (keyword != null) {
+            errors.addAll(ParamValidator.maxLength("keyword", keyword, 50));
+            errors.addAll(ParamValidator.noInjection("keyword", keyword));
         }
 
-        if (keyword.length() > 50) {
-            return "{\"error\": \"查询keyword 参数长度过长\"}";
-        }
+        return errors;
+    }
+
+    @Override
+    protected String execute(JSONObject args) {
+        String keyword = args.getString("keyword").trim();
+        log.info("[queryUser] 查询关键词: {}", keyword);
         keyword = keyword.replaceAll("%", "\\%");
-
         keyword = keyword.trim();
         log.info("[queryUser] 查询关键词: {}", keyword);
 
@@ -59,11 +66,25 @@ public class UserToolHandler implements ToolHandler {
         qw.last("LIMIT 10");
 
         List<PracticeSysUser> users = practiceSysUserMapper.selectList(qw);
-
         if (users.isEmpty()) {
             return "{\"message\": \"未找到匹配关键词 '" + keyword + "' 的用户\"}";
         }
-
+        if (!isCurrentUserAdmin()) {
+            //非管理员数据脱敏
+            for (PracticeSysUser user : users) {
+                user.setPhone(maskPhone(user.getPhone()));
+            }
+        }
         return JSON.toJSONString(users);
+    }
+
+    private String maskPhone(String phone) {
+        if (phone == null || phone.length() < 7) return phone;
+        return phone.substring(0, 3) + "****" + phone.substring(phone.length() - 4);
+    }
+
+    @Override
+    protected String getToolCode() {
+        return ToolCons.tool_code_queryUser;
     }
 }

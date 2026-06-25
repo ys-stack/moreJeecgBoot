@@ -7,7 +7,7 @@ import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
-import org.jeecg.modules.airag.practice.tool.ToolHandler;
+import org.jeecg.modules.airag.practice.tool.handler.ToolHandler;
 import org.jeecg.modules.airag.practice.tool.entity.AiToolCallLog;
 import org.jeecg.modules.airag.practice.tool.entity.AiToolDefinition;
 import org.springframework.beans.factory.annotation.Value;
@@ -145,7 +145,7 @@ public class ToolCallingDispatcher {
      *
      * 需要转成 LangChain4j 的 JsonObjectSchema（通过 Builder 手动构建）。
      */
-    private JsonObjectSchema parseSchema(String schemaJson) {
+    JsonObjectSchema parseSchema(String schemaJson) {
         try {
             if (schemaJson == null || schemaJson.isBlank()) {
                 return JsonObjectSchema.builder().build();
@@ -244,31 +244,5 @@ public class ToolCallingDispatcher {
         }
     }
 
-    // ======================== 内部数据结构 ========================
 
-    /**
-     * 加载结果封装：把三个关联的 Map/List 打包在一起
-     */
-    public static class LoadedTools {
-        /** 工具规格说明列表（发给模型） */
-        private final List<ToolSpecification> specifications;
-        /** 工具编码 → Handler 映射（用于执行） */
-        private final Map<String, ToolHandler> handlers;
-        /** 工具编码 → 数据库定义 映射（用于日志记录） */
-        private final Map<String, AiToolDefinition> definitions;
-
-        public LoadedTools(List<ToolSpecification> specifications,
-                           Map<String, ToolHandler> handlers,
-                           Map<String, AiToolDefinition> definitions) {
-            this.specifications = specifications;
-            this.handlers = handlers;
-            this.definitions = definitions;
-        }
-
-        public List<ToolSpecification> getSpecifications() { return specifications; }
-        public Map<String, ToolHandler> getHandlers() { return handlers; }
-        public Map<String, AiToolDefinition> getDefinitions() { return definitions; }
-
-        public boolean isEmpty() { return specifications.isEmpty(); }
-    }
 }

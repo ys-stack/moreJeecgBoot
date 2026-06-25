@@ -7,7 +7,8 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
-import org.jeecg.modules.airag.practice.tool.ToolHandler;
+import org.jeecg.modules.airag.practice.tool.controller.ToolChatController;
+import org.jeecg.modules.airag.practice.tool.handler.ToolHandler;
 import org.jeecg.modules.airag.practice.tool.entity.AiToolDefinition;
 import org.jeecg.modules.airag.practice.tool.vo.ToolChatResponse;
 import org.jeecg.modules.airag.practice.tool.vo.ToolChatResponse.ToolCallDetail;
@@ -47,7 +48,7 @@ public class ToolChatService {
     private final OpenAiChatModel chatModel;
 
     @Resource
-    private ToolCallingDispatcher dispatcher;
+    private ToolCallingService toolCallingService;
 
     @Value("${practice.ai.model-name:mimo-v2.5-pro}")
     private String modelName;
@@ -65,15 +66,13 @@ public class ToolChatService {
 
     /**
      * Tool Calling 对话入口
-     *
-     * @param userMessage 用户的问题，如 "帮我查一下订单 B100"
      * @return 包含最终回答 + 工具调用详情的响应
      */
-    public ToolChatResponse chatWithTools(String userMessage) {
+    public ToolChatResponse chatWithTools(ToolChatController.ToolChatRequest request) {
         long startTime = System.currentTimeMillis();
 
         // ============ 第 1 步：加载所有 active 工具 ============
-        ToolCallingDispatcher.LoadedTools loadedTools = dispatcher.loadActiveTools();
+        toolCallingService.buildToolMap(request.getSessionId(),);
         if (loadedTools.isEmpty()) {
             log.warn("没有 active 工具，降级为普通对话");
             return fallbackChat(userMessage, startTime);
