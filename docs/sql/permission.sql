@@ -39,7 +39,11 @@ INSERT INTO `jeecg-boot`.`sys_permission` (`id`, `parent_id`, `name`, `url`, `co
 INSERT INTO sys_permission (id, parent_id, name, url, component, is_route, component_name, redirect, menu_type, perms, perms_type, sort_no, always_show, icon, is_leaf, keep_alive, hidden, hide_tab, description, create_by, create_time, update_by, update_time, del_flag, rule_flag, status, internal_or_external)
 VALUES ('9000000000000000009', '9000000000000000001', '线程池监控', '/practice-ai/threadpool-monitor', 'practice/threadpoolmonitor/index', 1, NULL, NULL, 1, NULL, '1', 8.0, 0, 'ant-design:dashboard-outlined', 1, 0, 0, 0, '线程池运行状态监控', 'admin', NOW(), 'admin', NOW(), 0, 0, '1', 0);
 
--- 9. 给 admin 角色授权（角色 ID 替换成你实际查出来的）
+-- 9. 注册子菜单「Tool Calling 对话」
+INSERT INTO sys_permission (id, parent_id, name, url, component, is_route, component_name, redirect, menu_type, perms, perms_type, sort_no, always_show, icon, is_leaf, keep_alive, hidden, hide_tab, description, create_by, create_time, update_by, update_time, del_flag, rule_flag, status, internal_or_external)
+VALUES ('9000000000000000010', '9000000000000000001', 'Tool Calling 对话', '/practice-ai/tool-chat', 'practice/toolchat/index', 1, NULL, NULL, 1, NULL, '1', 5.0, 0, 'ant-design:tool-outlined', 1, 0, 0, 0, 'Tool Calling 对话，支持写操作二次确认', 'admin', NOW(), 'admin', NOW(), 0, 0, '1', 0);
+
+-- 10. 给 admin 角色授权（角色 ID 替换成你实际查出来的）
 INSERT INTO sys_role_permission (id, role_id, permission_id)
 VALUES
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000001'),
@@ -50,4 +54,5 @@ VALUES
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000006'),
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000007'),
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000008'),
-    (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000009');
+    (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000009'),
+    (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000010');

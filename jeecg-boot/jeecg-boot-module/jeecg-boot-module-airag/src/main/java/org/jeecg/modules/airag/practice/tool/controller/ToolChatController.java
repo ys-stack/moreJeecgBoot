@@ -9,6 +9,8 @@ import org.jeecg.modules.airag.practice.tool.service.ToolChatService;
 import org.jeecg.modules.airag.practice.tool.vo.ToolChatResponse;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 /**
  * Tool Calling 对话接口
  *
@@ -41,7 +43,6 @@ public class ToolChatController {
      * 响应中的 toolCalls 字段记录了每次工具调用的详细信息（参数、结果、耗时），
      * 前端可以用来展示"AI 的思考过程"。
      */
-    @IgnoreAuth
     @PostMapping("/chat")
     public Result<ToolChatResponse> chatWithTools(@RequestBody ToolChatRequest request) {
         if (StringUtils.isBlank(request.getMessage())) {
@@ -55,7 +56,7 @@ public class ToolChatController {
         log.info("[ToolChat] 收到请求: {}", request.getMessage());
 
         try {
-            ToolChatResponse response = toolChatService.chatWithTools(ToolChatRequest request);
+            ToolChatResponse response = toolChatService.chatWithTools(request);
             log.info("[ToolChat] 完成 | 轮数={} | 工具调用次数={} | 耗时={}ms",
                     response.getRounds(),
                     response.getToolCalls() != null ? response.getToolCalls().size() : 0,
@@ -75,8 +76,9 @@ public class ToolChatController {
     public static class ToolChatRequest {
         /** 用户输入的问题 */
         private String message;
-        /** 用户输入的问题 */
-        private String SessionId;
-
+        /** 会话 ID */
+        private String sessionId;
+        /** 用户已确认的工具编码列表（跳过二次确认） */
+        private List<String> confirmTools;
     }
 }

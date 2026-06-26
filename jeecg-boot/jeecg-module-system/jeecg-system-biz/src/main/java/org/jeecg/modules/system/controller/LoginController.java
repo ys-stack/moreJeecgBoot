@@ -56,8 +56,6 @@ public class LoginController {
 	@Autowired
 	private ISysUserService sysUserService;
 	@Autowired
-	private ISysPermissionService sysPermissionService;
-	@Autowired
 	private SysBaseApiImpl sysBaseApi;
 	@Autowired
 	private ISysLogService logService;

@@ -405,10 +405,10 @@ async function handleSubmit() {
   modalSubmitting.value = true;
   try {
     if (isEdit.value) {
-      await defHttp.put({ url: `${API_BASE}/definition/edit`, params: { ...formData } });
+      await defHttp.put({ url: `${API_BASE}/definition/edit`, data: { ...formData } });
       message.success('修改成功');
     } else {
-      await defHttp.post({ url: `${API_BASE}/definition/add`, params: { ...formData } });
+      await defHttp.post({ url: `${API_BASE}/definition/add`, data: { ...formData } });
       message.success('添加成功');
     }
     modalVisible.value = false;

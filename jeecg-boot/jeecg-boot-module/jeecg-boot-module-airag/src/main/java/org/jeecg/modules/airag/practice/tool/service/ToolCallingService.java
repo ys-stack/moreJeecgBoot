@@ -2,11 +2,11 @@ package org.jeecg.modules.airag.practice.tool.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
-import dev.langchain4j.service.tool.ToolExecutor;
 import jakarta.annotation.Resource;
+import lombok.AllArgsConstructor;
+import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.shiro.SecurityUtils;
 import org.jeecg.common.system.vo.LoginUser;
@@ -20,12 +20,23 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
+/**
+ * 工具调用服务
+ *
+ * 职责：
+ * 1. 从数据库加载 active 工具定义，按当前用户权限过滤
+ * 2. 构建 ToolSpecification（给模型看的"说明书"）
+ * 3. 提供 ToolHandler + AiToolDefinition 映射，供 ToolChatService 手动执行工具
+ * 4. 执行工具时自动设置上下文（用户、会话）并记录调用日志
+ */
 @Slf4j
 @Service
 public class ToolCallingService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+
     @Resource
     private IAiToolDefinitionService aiToolDefinitionService;
 
@@ -36,26 +47,128 @@ public class ToolCallingService {
     private ApplicationContext applicationContext;
 
     @Resource
-    private ToolCallingDispatcher toolCallingDispatcher;
-
-    @Resource
     private IAiToolCallLogService aiToolCallLogService;
 
     @Value("${practice.ai.model-name:mimo-v2.5-pro}")
     private String modelName;
 
-    /*
-     * @Author: ys
-     * @Date: 2026/6/25 15:33
-     * @DESC: 获取当前用户的角色编码列表
+    // ======================== 内部数据结构 ========================
+
+    /**
+     * 工具加载结果，包含模型需要的 Specification 列表和执行时需要的 Handler/Definition 映射
+     */
+    @Data
+    @AllArgsConstructor
+    public static class ToolBundle {
+        /** 给模型看的工具说明书列表 */
+        private List<ToolSpecification> specifications;
+        /** 工具编码 → Handler 映射，用于执行 */
+        private Map<String, ToolHandler> handlerMap;
+        /** 工具编码 → 工具定义映射，用于获取元信息（名称、ID 等） */
+        private Map<String, AiToolDefinition> defMap;
+
+        public boolean isEmpty() {
+            return specifications == null || specifications.isEmpty();
+        }
+    }
+
+    // ======================== 核心方法 ========================
+
+    /**
+     * 构建当前用户可用的工具集合
+     */
+    public ToolBundle buildToolMap() {
+        List<AiToolDefinition> activeTools = aiToolDefinitionService.listActiveTools();
+        if (activeTools.isEmpty()) {
+            return new ToolBundle(Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap());
+        }
+
+        List<String> userRoles = getCurrentUserRoleCodes();
+        Set<String> toolIdSet;
+        if (userRoles.isEmpty()) {
+            log.info("[ToolCalling] 无登录用户，跳过权限过滤，加载全部 active 工具");
+            toolIdSet = activeTools.stream().map(AiToolDefinition::getId).collect(Collectors.toSet());
+        } else {
+            List<String> toolIds = aiToolRolePermissionService.getPermittedToolIds(userRoles);
+            toolIdSet = new HashSet<>(toolIds);
+        }
+
+        List<ToolSpecification> specs = new ArrayList<>();
+        Map<String, ToolHandler> handlerMap = new LinkedHashMap<>();
+        Map<String, AiToolDefinition> defMap = new LinkedHashMap<>();
+
+        for (AiToolDefinition def : activeTools) {
+            if (!toolIdSet.contains(def.getId())) {
+                log.debug("[ToolCalling] 工具 {} 对当前用户不可用，跳过", def.getToolCode());
+                continue;
+            }
+            try {
+                ToolSpecification spec = buildSpec(def);
+                ToolHandler handler = (ToolHandler) applicationContext.getBean(def.getHandlerRef());
+
+                specs.add(spec);
+                handlerMap.put(def.getToolCode(), handler);
+                defMap.put(def.getToolCode(), def);
+
+                log.info("加载工具: {} ({}) → {}", def.getToolCode(), def.getToolName(), def.getHandlerRef());
+            } catch (Exception e) {
+                log.error("加载工具失败: {} - {}", def.getToolCode(), e.getMessage(), e);
+            }
+        }
+
+        log.info("[ToolCalling] 当前用户可用工具数: {}/{}", specs.size(), activeTools.size());
+        return new ToolBundle(specs, handlerMap, defMap);
+    }
+
+    /**
+     * 执行单个工具并记录日志（供 ToolChatService 手动调用）
+     *
+     * @param toolCode  工具编码
+     * @param handler   工具处理器
+     * @param def       工具定义
+     * @param argsJson  参数 JSON 字符串
+     * @param sessionId 会话 ID
+     * @param messageId 消息 ID
+     * @return 工具执行结果 JSON 字符串
+     */
+    public String executeTool(String toolCode, ToolHandler handler, AiToolDefinition def,
+                              String argsJson, String sessionId, String messageId) {
+        // 设置上下文
+        LoginUser currentUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+        ToolContext ctx = new ToolContext(currentUser, sessionId, messageId);
+        AbstractToolHandler.setContext(ctx);
+
+        long start = System.currentTimeMillis();
+        String status = "success";
+        String errorMsg = null;
+        String result = null;
+
+        try {
+            result = handler.execute(argsJson);
+        } catch (Exception e) {
+            status = "error";
+            errorMsg = e.getMessage();
+            result = "{\"error\": \"工具执行异常: " + e.getMessage() + "\"}";
+            log.error("[{}] 工具执行异常: {}", toolCode, e.getMessage(), e);
+        } finally {
+            AbstractToolHandler.clearContext();
+        }
+
+        long duration = System.currentTimeMillis() - start;
+        logCall(def, argsJson, result, duration, status, errorMsg, sessionId);
+
+        return result;
+    }
+
+    // ======================== 内部方法 ========================
+
+    /**
+     * 获取当前用户的角色编码列表
      */
     private List<String> getCurrentUserRoleCodes() {
         try {
             LoginUser user = (LoginUser) SecurityUtils.getSubject().getPrincipal();
             if (user == null) return List.of();
-
-            // JeecgBoot 的 LoginUser.roles 通常是逗号分隔的字符串如 "admin,user"
-            // 也可能是 List<SysRoleModel>，你检查一下你版本的源码
             String roles = user.getRoleCode();
             if (roles != null && !roles.isBlank()) {
                 return Arrays.asList(roles.split(","));
@@ -66,178 +179,20 @@ public class ToolCallingService {
         return List.of();
     }
 
-    /*
-     * @Author: ys
-     * @Date: 2026/6/25 15:36
-     * @DESC: 构建当前用户可用的工具映射，这个方法在 generate 循环开始前调用。返回的 Map 里只包含当前用户有权限的工具
-     */
-    public Map<ToolSpecification, ToolExecutor> buildToolMap(String sessionId, String messageId) {
-        List<AiToolDefinition> activeTools = aiToolDefinitionService.listActiveTools();
-        if (activeTools.isEmpty()) {
-            return Collections.emptyMap();
-        }
-        //获取当前用户的角色
-        List<String> userRoles  = getCurrentUserRoleCodes();
-        //查询这些角色有权限的工具ID
-        List<String> toolIds = aiToolRolePermissionService.getPermittedToolIds(userRoles);
-        Set<String> toolIdSet = new HashSet<>(toolIds);
-        //过滤 + 构建
-        LoginUser currentUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
-        Map<ToolSpecification, ToolExecutor> toolMap = new LinkedHashMap<>();
-
-        for (AiToolDefinition activeTool : activeTools) {
-            if (!toolIdSet.contains(activeTool.getId())) {
-                log.debug("[ToolCalling] 工具 {} 对当前用户不可用，跳过", activeTool.getToolCode());
-                continue;
-            }
-            ToolSpecification spec = buildSpec(activeTool);
-            ToolExecutor executor = buildExecutor(activeTool, currentUser, sessionId, messageId);
-            toolMap.put(spec, executor);
-        }
-        log.info("[ToolCalling] 当前用户可用工具数: {}/{}", toolMap.size(), activeTools.size());
-        return toolMap;
-    }
-
     /**
-     * 加载当前用户有权限的 active 工具，返回 LoadedTools（兼容 ToolChatService 现有逻辑）
-     *
-     * 和 ToolCallingDispatcher.loadActiveTools() 的区别：
-     *   - Dispatcher 加载全部 active 工具（无权限过滤）
-     *   - 这里先按角色过滤，只返回当前用户有权限的工具
-     *
-     * @return LoadedTools（specifications + handlers + definitions），无权限工具已被过滤
-     */
-    public ToolCallingDispatcher.LoadedTools loadActiveToolsWithPermission() {
-        List<AiToolDefinition> activeTools = aiToolDefinitionService.listActiveTools();
-        List<ToolSpecification> specs = new ArrayList<>();
-        Map<String, ToolHandler> handlerMap = new HashMap<>();
-        Map<String, AiToolDefinition> defMap = new HashMap<>();
-
-        if (activeTools.isEmpty()) {
-            return new ToolCallingDispatcher.LoadedTools(specs, handlerMap, defMap);
-        }
-
-        // 权限过滤
-        List<String> userRoles = getCurrentUserRoleCodes();
-        List<String> toolIds = aiToolRolePermissionService.getPermittedToolIds(userRoles);
-        Set<String> toolIdSet = new HashSet<>(toolIds);
-        LoginUser currentUser = null;
-        try {
-            currentUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
-        } catch (Exception ignored) {}
-
-        for (AiToolDefinition def : activeTools) {
-            if (!toolIdSet.contains(def.getId())) {
-                log.debug("[ToolCalling] 工具 {} 对当前用户不可用，跳过", def.getToolCode());
-                continue;
-            }
-            try {
-                ToolSpecification spec = buildSpec(def);
-                ToolHandler handler = (ToolHandler) applicationContext.getBean(def.getHandlerRef());
-                specs.add(spec);
-                handlerMap.put(def.getToolCode(), handler);
-                defMap.put(def.getToolCode(), def);
-            } catch (Exception e) {
-                log.error("加载工具失败: {} - {}", def.getToolCode(), e.getMessage(), e);
-            }
-        }
-
-        log.info("[ToolCalling] 权限过滤后加载 {} 个工具（总共 {} 个）", specs.size(), activeTools.size());
-        return new ToolCallingDispatcher.LoadedTools(specs, handlerMap, defMap);
-    }
-
-    /**
-     * 为一个工具定义构建执行器
-     * @param activeTool    工具定义（从数据库读出来的）
-     * @param currentUser 当前登录用户
-     * @param sessionId  对话会话 ID
-     * @param messageId  触发这次工具调用的用户消息 ID
-     * @return LangChain4j 的 ToolExecutor，模型调工具时由框架自动调用
-     */
-    private ToolExecutor buildExecutor(AiToolDefinition activeTool, LoginUser currentUser, String sessionId, String messageId) {
-        // 返回一个 lambda —— 这就是 ToolExecutor 的函数式实现
-        // request 是模型发过来的调用请求，包含工具名和参数
-        return (request,memoryId) -> {
-            String argsJson = request.arguments().toString();
-            //从 Spring 容器拿 Handler Bean
-            String handlerRef = activeTool.getHandlerRef();
-            ToolHandler handler = (ToolHandler) applicationContext.getBean(handlerRef);
-
-            //设置上下文（用户信息、会话信息）
-            ToolContext ctx = new ToolContext(currentUser, sessionId, messageId);
-            AbstractToolHandler.setContext(ctx);
-
-            long start = System.currentTimeMillis();
-            try{
-                //执行 Handler，拿到结果
-                String result = handler.execute(request.arguments());
-                long duration = System.currentTimeMillis() - start;
-                logCall(activeTool, argsJson, result, duration, "success", null,sessionId);
-                return result;
-            }catch (Exception e){
-                long duration = System.currentTimeMillis() - start;
-                logCall(activeTool, argsJson, null, duration, "error", e.getMessage(),sessionId);
-                return "{\"error\": \"工具执行异常: " + e.getMessage() + "\"}";
-            }
-            finally {
-                //无论成功失败，必须清除 ThreadLocal，防止内存泄漏
-                AbstractToolHandler.clearContext();
-            }
-        };
-    }
-
-    /*
-     * @Author: ys
-     * @Date: 2026/6/25 17:37
-     * @DESC: 记录工具调用
-     */
-    private void logCall(AiToolDefinition def, String argsJson, String result, long duration, String status, String errorMsg, String sessionId) {
-        try{
-            AiToolCallLog callLog = new AiToolCallLog();
-            callLog.setSessionId(sessionId);
-            callLog.setToolCode(def.getToolCode());
-            callLog.setToolName(def.getToolName());
-            callLog.setInputParams(argsJson);
-            callLog.setOutputResult(result);
-            callLog.setStatus(status);
-            callLog.setErrorMsg(errorMsg);
-            callLog.setDurationMs((int) duration);
-            callLog.setModelName(modelName);
-            callLog.setCreateTime(new Date());
-            aiToolCallLogService.save(callLog);
-        } catch (Exception e) {
-            log.warn("记录工具调用日志失败: {}", e.getMessage());
-        }
-    }
-
-    /*
-     * @Author: ys
-     * @Date: 2026/6/25 16:15
-     * @DESC: 把系统定义的工具转成ToolSpecification
+     * 构建单个工具的 ToolSpecification
      */
     public ToolSpecification buildSpec(AiToolDefinition activeTool) {
-        // 1. 把数据库里的 JSON Schema 字符串解析成 LangChain4j 的 JsonObjectSchema
         JsonObjectSchema jsonObjectSchema = parseSchema(activeTool.getParametersSchema());
         return ToolSpecification.builder()
-                .name(activeTool.getToolCode())       // 工具编码，如 "queryOrder"
-                .description(activeTool.getDescription()) // 工具描述，帮助模型决定何时调用
+                .name(activeTool.getToolCode())
+                .description(activeTool.getDescription())
                 .parameters(jsonObjectSchema)
                 .build();
     }
 
     /**
-     * 解析数据库中的 JSON Schema 字符串 → LangChain4j 的 JsonObjectSchema
-     *
-     * 数据库里的格式示例：
-     * {
-     *   "type": "object",
-     *   "properties": {
-     *     "orderCode": { "type": "string", "description": "订单号" }
-     *   },
-     *   "required": ["orderCode"]
-     * }
-     *
-     * 需要转成 LangChain4j 的 JsonObjectSchema（通过 Builder 手动构建）。
+     * 解析 JSON Schema 字符串 → LangChain4j JsonObjectSchema
      */
     JsonObjectSchema parseSchema(String schemaJson) {
         try {
@@ -248,19 +203,15 @@ public class ToolCallingService {
             JsonNode root = objectMapper.readTree(schemaJson);
             JsonObjectSchema.Builder builder = JsonObjectSchema.builder();
 
-            // 解析 properties
             JsonNode properties = root.get("properties");
             if (properties != null && properties.isObject()) {
                 Iterator<Map.Entry<String, JsonNode>> fields = properties.fields();
                 while (fields.hasNext()) {
                     Map.Entry<String, JsonNode> entry = fields.next();
-                    String propName = entry.getKey();
-                    JsonNode propDef = entry.getValue();
-                    addProperty(builder, propName, propDef);
+                    addProperty(builder, entry.getKey(), entry.getValue());
                 }
             }
 
-            // 解析 required
             JsonNode required = root.get("required");
             if (required != null && required.isArray()) {
                 List<String> requiredFields = new ArrayList<>();
@@ -275,21 +226,10 @@ public class ToolCallingService {
         }
     }
 
-    /**
-     * 根据 JSON Schema 中单个 property 的 type，调对应的 Builder 方法
-     *
-     * 支持的类型：
-     * - "string"  → addStringProperty(name, description)
-     * - "integer" → addIntegerProperty(name, description)
-     * - "number"  → addNumberProperty(name, description)
-     * - "boolean" → addBooleanProperty(name, description)
-     * - 带 "enum" 的 string → addEnumProperty(name, enumValues, description)
-     */
     private void addProperty(JsonObjectSchema.Builder builder, String name, JsonNode propDef) {
         String type = propDef.has("type") ? propDef.get("type").asText() : "string";
         String desc = propDef.has("description") ? propDef.get("description").asText() : null;
 
-        // 检查是否有 enum 约束（如 ticketType: ["bug", "feature", "task", "question"]）
         if (propDef.has("enum")) {
             List<String> enumValues = new ArrayList<>();
             propDef.get("enum").forEach(n -> enumValues.add(n.asText()));
@@ -314,4 +254,26 @@ public class ToolCallingService {
         }
     }
 
+    /**
+     * 记录工具调用日志
+     */
+    private void logCall(AiToolDefinition def, String argsJson, String result,
+                         long duration, String status, String errorMsg, String sessionId) {
+        try {
+            AiToolCallLog callLog = new AiToolCallLog();
+            callLog.setSessionId(sessionId);
+            callLog.setToolCode(def.getToolCode());
+            callLog.setToolName(def.getToolName());
+            callLog.setInputParams(argsJson);
+            callLog.setOutputResult(result);
+            callLog.setStatus(status);
+            callLog.setErrorMsg(errorMsg);
+            callLog.setDurationMs((int) duration);
+            callLog.setModelName(modelName);
+            callLog.setCreateTime(new Date());
+            aiToolCallLogService.save(callLog);
+        } catch (Exception e) {
+            log.warn("记录工具调用日志失败: {}", e.getMessage());
+        }
+    }
 }

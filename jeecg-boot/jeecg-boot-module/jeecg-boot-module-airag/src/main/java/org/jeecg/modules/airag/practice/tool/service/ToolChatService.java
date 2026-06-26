@@ -7,6 +7,7 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.jeecg.modules.airag.practice.tool.cons.ToolCons;
 import org.jeecg.modules.airag.practice.tool.controller.ToolChatController;
 import org.jeecg.modules.airag.practice.tool.handler.ToolHandler;
 import org.jeecg.modules.airag.practice.tool.entity.AiToolDefinition;
@@ -21,25 +22,13 @@ import java.util.*;
 /**
  * Tool Calling 对话服务
  *
- * 这是 Tool Calling 的"编排者"，负责把整个流程串起来：
- *
- * 1. 通过 Dispatcher 从数据库加载所有 active 工具
- * 2. 把用户消息 + 工具定义（ToolSpecification）一起发给模型
- * 3. 模型可能返回两种情况：
- *    a) 纯文本回答 → 直接返回（没有调用工具）
- *    b) 工具调用请求 → 执行工具 → 把结果喂回模型 → 重复
+ * 编排整个 Tool Calling 流程：
+ * 1. 通过 ToolCallingService 加载当前用户可用的工具
+ * 2. 把用户消息 + 工具定义一起发给模型
+ * 3. 模型返回工具调用请求 → 执行工具 → 把结果喂回模型 → 重复
  * 4. 直到模型给出最终文本回答，或达到最大轮数限制
  *
- * 手动控制循环的好处（对比 LangChain4j 自动模式）：
- * - 可以记录每一步的中间状态（调了什么工具、传了什么参数、返回了什么）
- * - 可以限制最大推理轮数，防止死循环
- * - 可以在前端展示"AI 的思考过程"
- *
- * 整个流程类比 Java：
- *   Dispatcher = ServiceRegistry（服务注册中心）
- *   ToolSpecification = Swagger 文档（告诉模型有哪些 API）
- *   ToolHandler = Controller 方法（实际执行业务逻辑）
- *   这个类 = Gateway / 网关（编排请求路由和结果聚合）
+ * 手动控制循环的好处：可以记录每步中间状态、限制推理轮数、在前端展示"AI 的思考过程"
  */
 @Slf4j
 @Service
@@ -53,11 +42,7 @@ public class ToolChatService {
     @Value("${practice.ai.model-name:mimo-v2.5-pro}")
     private String modelName;
 
-    /**
-     * 最大推理轮数。
-     * 模型可能连续调多个工具，这个限制防止死循环。
-     * 比如"查订单 12345，如果超时了就创建工单"需要 2 轮（查 + 写），5 轮绰绰有余。
-     */
+    /** 最大推理轮数，防止死循环 */
     private static final int MAX_ROUNDS = 5;
 
     public ToolChatService(@Qualifier("practiceChatModel") OpenAiChatModel chatModel) {
@@ -66,45 +51,48 @@ public class ToolChatService {
 
     /**
      * Tool Calling 对话入口
-     * @return 包含最终回答 + 工具调用详情的响应
      */
     public ToolChatResponse chatWithTools(ToolChatController.ToolChatRequest request) {
         long startTime = System.currentTimeMillis();
+        String userMessage = request.getMessage();
+        String sessionId = request.getSessionId();
+        String messageId = UUID.randomUUID().toString();
 
-        // ============ 第 1 步：加载所有 active 工具 ============
-        toolCallingService.buildToolMap(request.getSessionId(),);
-        if (loadedTools.isEmpty()) {
-            log.warn("没有 active 工具，降级为普通对话");
+        // confirmTools 防空
+        if (request.getConfirmTools() == null) {
+            request.setConfirmTools(Collections.emptyList());
+        }
+
+        // ============ 第 1 步：加载当前用户可用的工具 ============
+        ToolCallingService.ToolBundle bundle = toolCallingService.buildToolMap();
+        if (bundle.isEmpty()) {
+            log.warn("没有可用工具，降级为普通对话");
             return fallbackChat(userMessage, startTime);
         }
 
         // ============ 第 2 步：构建消息列表 ============
-        // 消息列表是"对话历史"，每轮都会追加新消息
-        // 初始只有用户的问题
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(new UserMessage(userMessage));
 
-        // 用于收集每轮工具调用的详情（最终返回给前端展示）
         List<ToolCallDetail> allToolCallDetails = new ArrayList<>();
         int rounds = 0;
 
         // ============ 第 3 步：推理循环 ============
-        // 模型可能调 0 个工具（直接回答）、1 个工具、或多个工具
         for (int round = 1; round <= MAX_ROUNDS; round++) {
             rounds = round;
             log.info("[Tool Calling] 第 {} 轮推理，消息数: {}", round, messages.size());
 
-            // 构建 ChatRequest：消息 + 工具定义
-            ChatRequest request = ChatRequest.builder()
+            // 构建 ChatRequest：消息 + 工具说明书
+            ChatRequest chatRequest = ChatRequest.builder()
                     .messages(messages)
-                    .toolSpecifications(loadedTools.getSpecifications())
+                    .toolSpecifications(bundle.getSpecifications())
                     .build();
 
             // 调用模型
-            ChatResponse response = chatModel.chat(request);
+            ChatResponse response = chatModel.chat(chatRequest);
             AiMessage aiMessage = response.aiMessage();
 
-            // ---------- 情况 A：模型直接给出文本回答，不需要调工具 ----------
+            // ---------- 情况 A：模型直接给出文本回答 ----------
             if (!aiMessage.hasToolExecutionRequests()) {
                 log.info("[Tool Calling] 第 {} 轮：模型给出最终回答", round);
                 return ToolChatResponse.builder()
@@ -117,47 +105,60 @@ public class ToolChatService {
             }
 
             // ---------- 情况 B：模型要调用工具 ----------
-            log.info("[Tool Calling] 第 {} 轮：模型请求调用 {} 个工具",
-                    round, aiMessage.toolExecutionRequests().size());
+            List<ToolExecutionRequest> toolRequests = aiMessage.toolExecutionRequests();
+            log.info("[Tool Calling] 第 {} 轮：模型请求调用 {} 个工具", round, toolRequests.size());
 
             // 把模型的回复（包含工具调用请求）加入消息历史
             messages.add(aiMessage);
 
             // 逐个执行工具
-            for (ToolExecutionRequest toolRequest : aiMessage.toolExecutionRequests()) {
+            boolean needConfirm = false;
+            for (ToolExecutionRequest toolRequest : toolRequests) {
                 String toolName = toolRequest.name();
-                log.info("[Tool Calling] 执行工具: {} | 参数: {}", toolName, toolRequest.arguments());
+                String argsJson = toolRequest.arguments();
+                log.info("[Tool Calling] 执行工具: {} | 参数: {}", toolName, argsJson);
 
-                // 从 Dispatcher 加载的映射中查找 Handler
-                ToolHandler handler = loadedTools.getHandlers().get(toolName);
-                AiToolDefinition def = loadedTools.getDefinitions().get(toolName);
-
+                ToolHandler handler = bundle.getHandlerMap().get(toolName);
+                AiToolDefinition def = bundle.getDefMap().get(toolName);
                 String result;
                 ToolCallDetail detail;
                 long toolStart = System.currentTimeMillis();
 
                 if (handler != null && def != null) {
+                    // 写操作二次确认：需要确认 且 用户未确认 → 中断，返回前端
+                    if (def.getRequireConfirm() == 1 && !request.getConfirmTools().contains(toolName)) {
+                        log.info("[Tool Calling] 工具 {} 需要用户确认，暂停执行", toolName);
+                        detail = ToolCallDetail.builder()
+                                .toolCode(toolName)
+                                .toolName(def.getToolName())
+                                .inputParams(argsJson)
+                                .status(ToolCons.status_pending_confirm)
+                                .build();
+                        allToolCallDetails.add(detail);
+                        needConfirm = true;
+                        continue;
+                    }
                     // 正常执行：调 Handler + 记录日志
-                    result = dispatcher.executeTool(toolRequest, def, handler, null);
+                    result = toolCallingService.executeTool(toolName, handler, def, argsJson, sessionId, messageId);
                     long toolDuration = System.currentTimeMillis() - toolStart;
 
                     detail = ToolCallDetail.builder()
                             .toolCode(toolName)
                             .toolName(def.getToolName())
-                            .inputParams(toolRequest.arguments())
+                            .inputParams(argsJson)
                             .outputResult(result)
                             .status(result.contains("\"error\"") ? "error" : "success")
                             .durationMs(toolDuration)
                             .build();
                 } else {
-                    // 工具不存在：返回错误信息给模型
+                    // 工具不存在
                     result = "{\"error\": \"工具 " + toolName + " 未找到或已停用\"}";
                     long toolDuration = System.currentTimeMillis() - toolStart;
 
                     detail = ToolCallDetail.builder()
                             .toolCode(toolName)
                             .toolName(toolName)
-                            .inputParams(toolRequest.arguments())
+                            .inputParams(argsJson)
                             .outputResult(result)
                             .status("error")
                             .durationMs(toolDuration)
@@ -166,13 +167,21 @@ public class ToolChatService {
                 }
 
                 allToolCallDetails.add(detail);
-
                 // 把工具执行结果加入消息历史
-                // ToolExecutionResultMessage 会把结果关联到对应的工具调用请求
                 messages.add(ToolExecutionResultMessage.from(toolRequest, result));
             }
 
-            // 继续下一轮循环：带着工具结果再次调用模型
+            // 有待确认的工具 → 立即返回，不继续下一轮推理
+            if (needConfirm) {
+                return ToolChatResponse.builder()
+                        .content("以下操作需要您确认后才会执行")
+                        .model(modelName)
+                        .costMs(System.currentTimeMillis() - startTime)
+                        .rounds(rounds)
+                        .toolCalls(allToolCallDetails)
+                        .needsConfirm(true)
+                        .build();
+            }
         }
 
         // 达到最大轮数，强制结束
@@ -187,8 +196,7 @@ public class ToolChatService {
     }
 
     /**
-     * 降级处理：没有 active 工具时，走普通对话模式
-     * 这样即使工具全被禁用，接口也不会报错
+     * 降级处理：没有可用工具时，走普通对话模式
      */
     private ToolChatResponse fallbackChat(String userMessage, long startTime) {
         try {

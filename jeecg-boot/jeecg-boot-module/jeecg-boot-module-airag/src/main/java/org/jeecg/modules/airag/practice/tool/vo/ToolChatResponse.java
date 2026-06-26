@@ -34,6 +34,9 @@ public class ToolChatResponse {
     /** 每次工具调用的详细日志 */
     private List<ToolCallDetail> toolCalls;
 
+    /** 是否有工具等待用户确认（前端据此展示确认 UI） */
+    private boolean needsConfirm;
+
     /**
      * 单次工具调用的详细信息
      */
