@@ -25,7 +25,6 @@
 
     <!-- 右侧：聊天区域 -->
     <div class="chat-main">
-      <!-- 消息列表 -->
       <div class="chat-area" ref="chatAreaRef">
         <div v-if="currentMessages.length === 0" class="welcome-state">
           <div class="welcome-icon"><ToolOutlined /></div>
@@ -59,24 +58,34 @@
             <div v-else class="bubble ai-bubble">
               <div class="ai-avatar"><RobotOutlined /></div>
               <div class="ai-body">
-                <!-- 工具调用详情 -->
+
+                <!-- 思考状态 -->
+                <div v-if="msg.thinking" class="thinking-bar">
+                  <LoadingOutlined spin style="margin-right: 6px" />
+                  {{ msg.thinking }}
+                </div>
+
+                <!-- 工具调用过程 -->
                 <div v-if="msg.toolCalls && msg.toolCalls.length > 0" class="tool-calls-section">
-                  <div class="tool-calls-header">
-                    <ThunderboltOutlined />
-                    <span>调用了 {{ msg.toolCalls.length }} 个工具</span>
-                    <a-tag v-if="msg.rounds" color="blue" size="small">{{ msg.rounds }} 轮</a-tag>
-                  </div>
                   <div
                     v-for="(tc, tcIdx) in msg.toolCalls"
                     :key="tcIdx"
                     :class="['tool-call-card', `status-${tc.status}`]"
                   >
-                    <div class="tc-header" @click="toggleToolCall(tc)">
-                      <span :class="['tc-status-dot', `dot-${tc.status}`]"></span>
+                    <div class="tc-header" @click="tc._expanded = !tc._expanded">
+                      <!-- 状态图标 -->
+                      <span v-if="tc.status === 'running'" class="tc-status-dot dot-running">
+                        <LoadingOutlined spin style="font-size: 10px" />
+                      </span>
+                      <span v-else :class="['tc-status-dot', `dot-${tc.status}`]"></span>
+
                       <span class="tc-name">{{ tc.toolName || tc.toolCode }}</span>
+
                       <a-tag v-if="tc.status === 'success'" color="green" size="small">成功</a-tag>
                       <a-tag v-else-if="tc.status === 'error'" color="red" size="small">失败</a-tag>
                       <a-tag v-else-if="tc.status === 'pending_confirm'" color="orange" size="small">待确认</a-tag>
+                      <a-tag v-else-if="tc.status === 'running'" color="blue" size="small">执行中</a-tag>
+
                       <span v-if="tc.durationMs" class="tc-duration">{{ tc.durationMs }}ms</span>
                       <DownOutlined :class="['tc-arrow', { open: tc._expanded }]" />
                     </div>
@@ -97,7 +106,7 @@
                 <div v-if="msg.needsConfirm" class="confirm-section">
                   <div class="confirm-header">
                     <ExclamationCircleOutlined style="color: #fa8c16" />
-                    <span>以下操作需要您确认</span>
+                    <span>以下写操作需要您确认</span>
                   </div>
                   <div
                     v-for="(tc, tcIdx) in msg.toolCalls"
@@ -121,17 +130,18 @@
                   </div>
                 </div>
 
-                <!-- AI 文本回复 -->
+                <!-- AI 文本回复（流式累加） -->
                 <div v-if="msg.content" class="ai-text" v-html="formatContent(msg.content)"></div>
 
-                <!-- 耗时标签 -->
+                <!-- 元信息 -->
                 <div v-if="msg.costMs && !msg.loading" class="msg-meta">
                   <a-tag size="small">{{ msg.model }}</a-tag>
                   <a-tag size="small">{{ msg.costMs }}ms</a-tag>
+                  <a-tag v-if="msg.rounds" size="small">{{ msg.rounds }} 轮</a-tag>
                 </div>
 
                 <!-- 加载动画 -->
-                <div v-if="msg.loading" class="typing-indicator">
+                <div v-if="msg.loading && !msg.thinking && (!msg.toolCalls || msg.toolCalls.length === 0)" class="typing-indicator">
                   <span class="dot"></span><span class="dot"></span><span class="dot"></span>
                 </div>
               </div>
@@ -169,13 +179,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, nextTick, computed } from 'vue';
+import { ref, reactive, nextTick, computed, watch, onMounted } from 'vue';
 import { defHttp } from '/@/utils/http/axios';
+import { getToken } from '/@/utils/auth';
 import { message as antMessage } from 'ant-design-vue';
 import {
   PlusOutlined, ToolOutlined, RobotOutlined, RightOutlined,
-  SendOutlined, ThunderboltOutlined, DownOutlined,
-  ExclamationCircleOutlined, CheckOutlined,
+  SendOutlined, DownOutlined, ExclamationCircleOutlined,
+  CheckOutlined, LoadingOutlined,
 } from '@ant-design/icons-vue';
 
 // ==================== 类型 ====================
@@ -185,7 +196,7 @@ interface ToolCallDetail {
   toolName: string;
   inputParams: string;
   outputResult: string;
-  status: 'success' | 'error' | 'pending_confirm';
+  status: 'success' | 'error' | 'pending_confirm' | 'running';
   durationMs: number;
   _expanded?: boolean;
 }
@@ -199,7 +210,7 @@ interface ChatMessage {
   rounds?: number;
   needsConfirm?: boolean;
   toolCalls?: ToolCallDetail[];
-  /** 记录本次请求的 confirmTools，确认时回传 */
+  thinking?: string;
   _confirmTools?: string[];
 }
 
@@ -230,6 +241,69 @@ const presetQuestions = [
   '帮我提一个 bug 工单，标题是登录页崩溃',
 ];
 
+// ==================== localStorage 持久化 ====================
+
+const STORAGE_KEY = 'practice_toolchat_sessions';
+const STORAGE_CURRENT = 'practice_toolchat_current';
+
+function saveSessions() {
+  try {
+    // 清理运行态字段，只持久化核心数据
+    const toSave = sessions.value.map(s => ({
+      id: s.id,
+      title: s.title,
+      messages: s.messages.map(m => ({
+        role: m.role,
+        content: m.content,
+        model: m.model,
+        costMs: m.costMs,
+        rounds: m.rounds,
+        needsConfirm: m.needsConfirm,
+        toolCalls: (m.toolCalls || []).map(tc => ({
+          toolCode: tc.toolCode,
+          toolName: tc.toolName,
+          inputParams: tc.inputParams,
+          outputResult: tc.outputResult,
+          status: tc.status,
+          durationMs: tc.durationMs,
+        })),
+      })),
+    }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+    localStorage.setItem(STORAGE_CURRENT, currentSessionId.value);
+  } catch (e) {
+    console.warn('保存会话失败', e);
+  }
+}
+
+function loadSessions() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Session[];
+      // 恢复 _expanded 字段（UI 状态，默认折叠）
+      parsed.forEach(s => {
+        s.messages.forEach(m => {
+          (m.toolCalls || []).forEach(tc => (tc as any)._expanded = false);
+          m.loading = false;
+          m.thinking = undefined;
+        });
+      });
+      sessions.value = parsed;
+    }
+    const savedCurrent = localStorage.getItem(STORAGE_CURRENT);
+    if (savedCurrent && sessions.value.find(s => s.id === savedCurrent)) {
+      currentSessionId.value = savedCurrent;
+    }
+  } catch (e) {
+    console.warn('加载会话失败', e);
+  }
+}
+
+// 深度监听，自动保存
+watch(sessions, saveSessions, { deep: true });
+watch(currentSessionId, saveSessions);
+
 // ==================== 会话管理 ====================
 
 function handleNewSession() {
@@ -247,60 +321,170 @@ function ensureSession(): Session {
   return sessions.value.find(s => s.id === currentSessionId.value)!;
 }
 
-// ==================== 消息操作 ====================
-
 function scrollToBottom() {
   nextTick(() => {
     scrollAnchorRef.value?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   });
 }
 
-function addMessage(msg: ChatMessage) {
-  const s = ensureSession();
-  s.messages.push(msg);
-  scrollToBottom();
-}
-
-// ==================== 发送请求 ====================
+// ==================== SSE 流式发送 ====================
 
 async function doSend(message: string, confirmTools: string[] = []) {
   const s = ensureSession();
 
   // 用户消息
-  addMessage({ role: 'user', content: message });
+  s.messages.push({ role: 'user', content: message });
+  scrollToBottom();
 
   // AI 占位
   const aiIdx = s.messages.length;
-  addMessage({ role: 'ai', content: '', loading: true });
+  s.messages.push({
+    role: 'ai', content: '', loading: true,
+    thinking: '准备中...', toolCalls: [],
+  });
+  scrollToBottom();
   isLoading.value = true;
 
   try {
     const body: any = { message, sessionId: currentSessionId.value };
     if (confirmTools.length > 0) body.confirmTools = confirmTools;
 
-    const res = await defHttp.post({ url: '/practice/tool/chat', data: body, timeout: 60 * 1000 });
+    const response = await fetch('/jeecgboot/practice/tool/chat/stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Access-Token': getToken() || '',
+        'Authorization': getToken() || '',
+      },
+      body: JSON.stringify(body),
+    });
 
-    const detail: ToolCallDetail[] = (res.toolCalls || []).map((tc: any) => ({
-      ...tc,
-      _expanded: false,
-    }));
+    if (!response.ok) throw new Error(`HTTP 错误: ${response.status}`);
+    if (!response.body) throw new Error('响应体为空');
 
-    s.messages[aiIdx] = {
-      role: 'ai',
-      content: res.content || '',
-      model: res.model,
-      costMs: res.costMs,
-      rounds: res.rounds,
-      needsConfirm: res.needsConfirm || false,
-      toolCalls: detail,
-      _confirmTools: confirmTools,
-    };
-    scrollToBottom();
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let accumulatedContent = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // 按 \n\n 分割 SSE 事件
+      const events = buffer.split('\n\n');
+      buffer = events.pop() || '';
+
+      for (const eventStr of events) {
+        if (!eventStr.trim()) continue;
+
+        let eventType = 'message';
+        let eventData = '';
+        const lines = eventStr.split('\n');
+        for (const line of lines) {
+          if (line.startsWith('event:')) eventType = line.slice(6).trim();
+          else if (line.startsWith('data:')) eventData = line.slice(5).trim();
+        }
+
+        const msg = s.messages[aiIdx];
+        if (!msg) continue;
+
+        switch (eventType) {
+          case 'thinking': {
+            const data = JSON.parse(eventData);
+            msg.thinking = `第 ${data.round} 轮思考中...`;
+            msg.loading = true;
+            scrollToBottom();
+            break;
+          }
+          case 'message': {
+            // 流式 token 累加
+            accumulatedContent += eventData;
+            msg.content = accumulatedContent;
+            msg.thinking = undefined; // 收到 token 后清除思考状态
+            scrollToBottom();
+            break;
+          }
+          case 'tool_call': {
+            const data = JSON.parse(eventData);
+            if (!msg.toolCalls) msg.toolCalls = [];
+            msg.toolCalls.push({
+              toolCode: data.toolCode,
+              toolName: data.toolName,
+              inputParams: data.inputParams,
+              outputResult: '',
+              status: 'running',
+              durationMs: 0,
+              _expanded: false,
+            });
+            msg.thinking = undefined;
+            scrollToBottom();
+            break;
+          }
+          case 'tool_result': {
+            const data = JSON.parse(eventData);
+            const tc = msg.toolCalls?.find(t => t.toolCode === data.toolCode);
+            if (tc) {
+              tc.outputResult = data.outputResult;
+              tc.status = data.status;
+              tc.durationMs = data.durationMs;
+            }
+            scrollToBottom();
+            break;
+          }
+          case 'confirm': {
+            const data = JSON.parse(eventData);
+            if (!msg.toolCalls) msg.toolCalls = [];
+            msg.toolCalls.push({
+              toolCode: data.toolCode,
+              toolName: data.toolName,
+              inputParams: data.inputParams,
+              outputResult: '',
+              status: 'pending_confirm',
+              durationMs: 0,
+              _expanded: false,
+            });
+            msg.needsConfirm = true;
+            msg.thinking = undefined;
+            scrollToBottom();
+            break;
+          }
+          case 'done': {
+            const data = JSON.parse(eventData);
+            msg.model = data.model;
+            msg.costMs = data.costMs;
+            msg.rounds = data.rounds;
+            msg.loading = false;
+            msg.thinking = undefined;
+            if (data.needsConfirm) msg.needsConfirm = true;
+            scrollToBottom();
+            break;
+          }
+          case 'error': {
+            msg.content = accumulatedContent ? accumulatedContent + '\n\n❌ ' + eventData : '❌ ' + eventData;
+            msg.loading = false;
+            msg.thinking = undefined;
+            scrollToBottom();
+            break;
+          }
+        }
+      }
+    }
+
+    // 流结束，确保 loading 关闭
+    const msg = s.messages[aiIdx];
+    if (msg) {
+      msg.loading = false;
+      msg.thinking = undefined;
+    }
   } catch (e: any) {
-    s.messages[aiIdx] = {
-      role: 'ai',
-      content: '请求失败: ' + (e?.message || e),
-    };
+    const msg = s.messages[aiIdx];
+    if (msg) {
+      msg.content = '❌ 请求失败: ' + (e?.message || e);
+      msg.loading = false;
+      msg.thinking = undefined;
+    }
   } finally {
     isLoading.value = false;
   }
@@ -330,12 +514,11 @@ function handleKeyDown(e: KeyboardEvent) {
 async function handleConfirmTool(msg: ChatMessage, toolCode: string) {
   confirmLoading[toolCode] = true;
   try {
-    // 收集所有已确认的工具（含之前已确认的 + 当前这个）
     const confirmed = [...(msg._confirmTools || []), toolCode];
-    // 重新发送原始消息（从上一条 user message 取）
     const s = ensureSession();
     const msgIdx = s.messages.indexOf(msg);
-    // 找到这条 AI 消息之前的最后一条 user message
+
+    // 找原始用户消息
     let originalMessage = '';
     for (let i = msgIdx - 1; i >= 0; i--) {
       if (s.messages[i].role === 'user') {
@@ -347,42 +530,30 @@ async function handleConfirmTool(msg: ChatMessage, toolCode: string) {
       antMessage.error('找不到原始问题');
       return;
     }
-    // 替换当前 AI 消息为加载状态
-    s.messages[msgIdx] = { role: 'ai', content: '', loading: true };
-    isLoading.value = true;
 
-    const body = { message: originalMessage, sessionId: currentSessionId.value, confirmTools: confirmed };
-    const res = await defHttp.post({ url: '/practice/tool/chat', data: body, timeout: 60 * 1000 });
-
-    const detail: ToolCallDetail[] = (res.toolCalls || []).map((tc: any) => ({
-      ...tc,
-      _expanded: false,
-    }));
-
+    // 替换当前消息为新的加载状态
     s.messages[msgIdx] = {
-      role: 'ai',
-      content: res.content || '',
-      model: res.model,
-      costMs: res.costMs,
-      rounds: res.rounds,
-      needsConfirm: res.needsConfirm || false,
-      toolCalls: detail,
-      _confirmTools: confirmed,
+      role: 'ai', content: '', loading: true,
+      thinking: '确认执行中...', toolCalls: [],
     };
     scrollToBottom();
+
+    // 重新发送（SSE 流式）
+    await doSend(originalMessage, confirmed);
   } catch (e: any) {
     antMessage.error('确认执行失败: ' + (e?.message || e));
   } finally {
     confirmLoading[toolCode] = false;
-    isLoading.value = false;
   }
 }
 
-// ==================== 工具函数 ====================
+// ==================== 初始化 ====================
 
-function toggleToolCall(tc: ToolCallDetail) {
-  tc._expanded = !tc._expanded;
-}
+onMounted(() => {
+  loadSessions();
+});
+
+// ==================== 工具函数 ====================
 
 function formatJson(str: string | null | undefined): string {
   if (!str) return '（空）';
@@ -439,7 +610,6 @@ function formatContent(content: string): string {
 .chat-main {
   flex: 1; display: flex; flex-direction: column; overflow: hidden;
 }
-
 .chat-area {
   flex: 1; overflow-y: auto; padding: 20px; scroll-behavior: smooth;
 }
@@ -495,17 +665,18 @@ function formatContent(content: string): string {
   }
 }
 
-// ==================== 工具调用卡片 ====================
-.tool-calls-section {
-  margin-bottom: 12px;
-  .tool-calls-header {
-    display: flex; align-items: center; gap: 6px; font-size: 13px; color: @text2;
-    margin-bottom: 8px; font-weight: 500;
-  }
+// ==================== 思考状态 ====================
+.thinking-bar {
+  display: flex; align-items: center; font-size: 13px; color: @primary;
+  padding: 6px 0; font-weight: 500;
 }
+
+// ==================== 工具调用卡片 ====================
+.tool-calls-section { margin-bottom: 12px; }
 
 .tool-call-card {
   border: 1px solid @border; border-radius: 8px; margin-bottom: 6px; overflow: hidden;
+  &.status-running { border-color: @primary; background: #f0f7ff; }
   &.status-pending_confirm { border-color: #fa8c16; background: #fffbe6; }
   &.status-error { border-color: #ff4d4f; }
 
@@ -515,7 +686,9 @@ function formatContent(content: string): string {
     &:hover { background: #fafafa; }
   }
   .tc-status-dot {
-    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    &.dot-running { color: @primary; background: transparent; border: none; }
     &.dot-success { background: #52c41a; }
     &.dot-error { background: #ff4d4f; }
     &.dot-pending_confirm { background: #fa8c16; }

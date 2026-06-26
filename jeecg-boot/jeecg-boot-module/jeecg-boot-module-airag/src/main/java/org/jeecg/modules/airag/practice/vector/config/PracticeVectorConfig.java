@@ -29,6 +29,7 @@ public class PracticeVectorConfig {
     private EmbedProperties embed = new EmbedProperties();
     private EsProperties es = new EsProperties();
     private ParserProperties parser = new ParserProperties();
+    private RerankProperties rerank = new RerankProperties();
 
     /**
      * Embedding 模型配置
@@ -75,6 +76,17 @@ public class PracticeVectorConfig {
         private String url = "http://localhost:8000";
         /** 读取超时秒数 */
         private int timeoutSeconds = 120;
+    }
+
+    /**
+     * Rerank 重排序配置
+     */
+    @Data
+    public static class RerankProperties {
+        /** 是否启用 Rerank（关闭则只用 kNN 排序） */
+        private boolean enabled = true;
+        /** Rerank 模型名称 */
+        private String modelName = "BAAI/bge-reranker-v2-m3";
     }
 
     /**

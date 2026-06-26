@@ -78,12 +78,23 @@ public class ToolCallingService {
      * 构建当前用户可用的工具集合
      */
     public ToolBundle buildToolMap() {
+        LoginUser currentUser = null;
+        try {
+            currentUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+        } catch (Exception ignored) {}
+        return buildToolMap(currentUser);
+    }
+
+    /**
+     * 构建工具集合（支持外部传入用户，用于 SSE 线程池等场景）
+     */
+    public ToolBundle buildToolMap(LoginUser currentUser) {
         List<AiToolDefinition> activeTools = aiToolDefinitionService.listActiveTools();
         if (activeTools.isEmpty()) {
             return new ToolBundle(Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap());
         }
 
-        List<String> userRoles = getCurrentUserRoleCodes();
+        List<String> userRoles = getUserRoleCodes(currentUser);
         Set<String> toolIdSet;
         if (userRoles.isEmpty()) {
             log.info("[ToolCalling] 无登录用户，跳过权限过滤，加载全部 active 工具");
@@ -133,8 +144,15 @@ public class ToolCallingService {
      */
     public String executeTool(String toolCode, ToolHandler handler, AiToolDefinition def,
                               String argsJson, String sessionId, String messageId) {
-        // 设置上下文
         LoginUser currentUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+        return executeTool(toolCode, handler, def, argsJson, sessionId, messageId, currentUser);
+    }
+
+    /**
+     * 执行工具（支持外部传入用户，用于 SSE 线程池等无法通过 SecurityUtils 获取用户的场景）
+     */
+    public String executeTool(String toolCode, ToolHandler handler, AiToolDefinition def,
+                              String argsJson, String sessionId, String messageId, LoginUser currentUser) {
         ToolContext ctx = new ToolContext(currentUser, sessionId, messageId);
         AbstractToolHandler.setContext(ctx);
 
@@ -166,8 +184,15 @@ public class ToolCallingService {
      * 获取当前用户的角色编码列表
      */
     private List<String> getCurrentUserRoleCodes() {
+        LoginUser user = null;
         try {
-            LoginUser user = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+            user = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+        } catch (Exception ignored) {}
+        return getUserRoleCodes(user);
+    }
+
+    private List<String> getUserRoleCodes(LoginUser user) {
+        try {
             if (user == null) return List.of();
             String roles = user.getRoleCode();
             if (roles != null && !roles.isBlank()) {

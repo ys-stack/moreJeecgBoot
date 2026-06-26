@@ -41,6 +41,9 @@ public class VectorStoreService {
     @Resource
     private EmbeddingService embeddingService;
 
+    @Resource
+    private RerankService rerankService;
+
     // ==================== 索引管理 ====================
 
     /**
@@ -202,12 +205,16 @@ public class VectorStoreService {
     // ==================== 向量检索 ====================
 
     /**
-     * 向量检索：query → Embedding → ES kNN → topK
+     * 向量检索：query → Embedding → ES kNN 粗召回 → Rerank 精排 → topK
+     *
+     * 两阶段检索：
+     * 1. kNN 粗召回：取 topK * 4 候选（快但不够准）
+     * 2. Rerank 精排：Cross-Encoder 对 (query, doc) 打分（慢但准确）
      *
      * @param query           用户查询文本
      * @param topK            返回条数
      * @param knowledgeBaseId 知识库ID（可选，为空则搜索全部）
-     * @return 相似分片列表（按分数降序）
+     * @return 相似分片列表（按 Rerank 分数降序）
      */
     public List<VectorSearchResultVO> search(String query, int topK, String knowledgeBaseId) {
         ensureIndex();
@@ -215,17 +222,52 @@ public class VectorStoreService {
         // 1. 将查询文本向量化
         float[] queryVector = embeddingService.embed(query);
 
-        // 2. 构建 ES kNN 查询
+        // 2. kNN 粗召回：取 topK * 4 候选，给 Rerank 留足余量
+        int recallSize = topK * 4;
+        List<VectorSearchResultVO> candidates = knnSearch(queryVector, recallSize, knowledgeBaseId);
+
+        if (candidates.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 3. Rerank 精排：Cross-Encoder 重排序，取 topK
+        List<String> candidateTexts = candidates.stream()
+                .map(VectorSearchResultVO::getContent)
+                .collect(Collectors.toList());
+
+        List<RerankService.RerankResult> rerankResults = rerankService.rerank(query, candidateTexts, topK);
+
+        // 4. 按 Rerank 分数重组结果
+        List<VectorSearchResultVO> finalResults = new ArrayList<>();
+        for (RerankService.RerankResult rr : rerankResults) {
+            if (rr.getIndex() < candidates.size()) {
+                VectorSearchResultVO candidate = candidates.get(rr.getIndex());
+                candidate.setScore(rr.getScore());
+                finalResults.add(candidate);
+            }
+        }
+
+        log.info("向量检索完成: query='{}', kNN召回={}, Rerank返回={}", query, candidates.size(), finalResults.size());
+        return finalResults;
+    }
+
+    /**
+     * kNN 粗召回（纯向量检索，不做 Rerank）
+     *
+     * @param queryVector     查询向量
+     * @param size            召回数量
+     * @param knowledgeBaseId 知识库过滤（可选）
+     * @return 候选分片列表
+     */
+    private List<VectorSearchResultVO> knnSearch(float[] queryVector, int size, String knowledgeBaseId) {
         JSONObject body = new JSONObject();
 
-        // kNN 核心参数
         JSONObject knn = new JSONObject();
         knn.put("field", "chunk_vector");
         knn.put("query_vector", floatArrayToList(queryVector));
-        knn.put("k", topK);
-        knn.put("num_candidates", topK * 10); // 候选集越大越精确，但越慢
+        knn.put("k", size);
+        knn.put("num_candidates", size * 10);
 
-        // 如果有知识库过滤条件，加 filter
         if (knowledgeBaseId != null && !knowledgeBaseId.isBlank()) {
             JSONObject filter = new JSONObject();
             JSONObject term = new JSONObject();
@@ -237,15 +279,13 @@ public class VectorStoreService {
         body.put("knn", knn);
         body.put("_source", List.of("chunk_id", "document_id", "knowledge_base_id",
                 "chunk_text", "heading_path", "chunk_index", "source_file_name"));
-        body.put("size", topK);
+        body.put("size", size);
 
-        // 3. 发送搜索请求
         String url = "http://" + config.getEs().getClusterNodes() + "/"
                 + config.getEs().getIndexName() + "/_search";
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         HttpEntity<String> entity = new HttpEntity<>(body.toJSONString(), headers);
-        log.info(body.toJSONString());
 
         try {
             ResponseEntity<String> resp = practiceEsRestTemplate.exchange(url, HttpMethod.POST, entity, String.class);
@@ -275,11 +315,10 @@ public class VectorStoreService {
                         .build());
             }
 
-            log.info("向量检索完成: query='{}', topK={}, 命中数={}", query, topK, results.size());
             return results;
 
         } catch (Exception e) {
-            log.error("ES 向量检索失败", e);
+            log.error("ES kNN 粗召回失败", e);
             throw new RuntimeException("向量检索失败: " + e.getMessage(), e);
         }
     }
@@ -305,14 +344,15 @@ public class VectorStoreService {
         ensureIndex();
         float[] queryVector = embeddingService.embed(query);
 
+        // kNN 粗召回：多知识库过滤用 terms
+        int recallSize = topK * 4;
         JSONObject body = new JSONObject();
         JSONObject knn = new JSONObject();
         knn.put("field", "chunk_vector");
         knn.put("query_vector", floatArrayToList(queryVector));
-        knn.put("k", topK);
-        knn.put("num_candidates", topK * 10);
+        knn.put("k", recallSize);
+        knn.put("num_candidates", recallSize * 10);
 
-        // 多个知识库ID → 使用 terms 过滤
         JSONObject filter = new JSONObject();
         JSONObject terms = new JSONObject();
         terms.put("knowledge_base_id", knowledgeBaseIds);
@@ -322,7 +362,7 @@ public class VectorStoreService {
         body.put("knn", knn);
         body.put("_source", List.of("chunk_id", "document_id", "knowledge_base_id",
                 "chunk_text", "heading_path", "chunk_index", "source_file_name"));
-        body.put("size", topK);
+        body.put("size", recallSize);
 
         String url = "http://" + config.getEs().getClusterNodes() + "/"
                 + config.getEs().getIndexName() + "/_search";
@@ -337,13 +377,13 @@ public class VectorStoreService {
             if (hits == null || hits.getJSONArray("hits") == null) {
                 return Collections.emptyList();
             }
-            List<VectorSearchResultVO> results = new ArrayList<>();
+            List<VectorSearchResultVO> candidates = new ArrayList<>();
             JSONArray hitsArray = hits.getJSONArray("hits");
             for (int i = 0; i < hitsArray.size(); i++) {
                 JSONObject hit = hitsArray.getJSONObject(i);
                 JSONObject source = hit.getJSONObject("_source");
                 float score = hit.getFloatValue("_score");
-                results.add(VectorSearchResultVO.builder()
+                candidates.add(VectorSearchResultVO.builder()
                         .chunkId(source.getString("chunk_id"))
                         .documentId(source.getString("document_id"))
                         .knowledgeBaseId(source.getString("knowledge_base_id"))
@@ -354,8 +394,25 @@ public class VectorStoreService {
                         .chunkIndex(source.getInteger("chunk_index"))
                         .build());
             }
-            log.info("多知识库向量检索完成: query='{}', topK={}, KB数={}, 命中={}", query, topK, knowledgeBaseIds.size(), results.size());
-            return results;
+
+            // Rerank 精排
+            List<String> candidateTexts = candidates.stream()
+                    .map(VectorSearchResultVO::getContent)
+                    .collect(Collectors.toList());
+            List<RerankService.RerankResult> rerankResults = rerankService.rerank(query, candidateTexts, topK);
+
+            List<VectorSearchResultVO> finalResults = new ArrayList<>();
+            for (RerankService.RerankResult rr : rerankResults) {
+                if (rr.getIndex() < candidates.size()) {
+                    VectorSearchResultVO candidate = candidates.get(rr.getIndex());
+                    candidate.setScore(rr.getScore());
+                    finalResults.add(candidate);
+                }
+            }
+
+            log.info("多知识库向量检索完成: query='{}', topK={}, KB数={}, kNN召回={}, Rerank返回={}",
+                    query, topK, knowledgeBaseIds.size(), candidates.size(), finalResults.size());
+            return finalResults;
         } catch (Exception e) {
             log.error("多知识库向量检索失败", e);
             throw new RuntimeException("向量检索失败: " + e.getMessage(), e);

@@ -66,6 +66,24 @@ const practiceAi: AppRouteModule = {
         icon: 'ant-design:dashboard-outlined',
       },
     },
+    {
+      path: 'tool-chat',
+      name: 'PracticeToolChat',
+      component: () => import('/@/views/practice/toolchat/index.vue'),
+      meta: {
+        title: 'Tool Calling 对话',
+        icon: 'ant-design:tool-outlined',
+      },
+    },
+    {
+      path: 'tool-manage',
+      name: 'PracticeToolManage',
+      component: () => import('/@/views/practice/toolmanage/index.vue'),
+      meta: {
+        title: '工具管理',
+        icon: 'ant-design:api-outlined',
+      },
+    },
   ],
 };
 
