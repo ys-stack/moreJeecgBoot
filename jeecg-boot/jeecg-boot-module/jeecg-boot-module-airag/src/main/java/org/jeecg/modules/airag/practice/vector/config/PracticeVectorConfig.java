@@ -1,6 +1,7 @@
 package org.jeecg.modules.airag.practice.vector.config;
 
 import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -18,9 +19,12 @@ import java.util.Collections;
  * - embed: 硅基流动 bge-m3 Embedding API
  * - es:    ES 8.x 集群（向量存储）
  *
+ * 敏感信息（apiKey、ES password）通过 yml 配置或环境变量注入，不在源码中硬编码。
+ *
  * @Author: jeecg-boot
  * @Date: 2026-06-16
  */
+@Slf4j
 @Data
 @Configuration
 @ConfigurationProperties(prefix = "practice")
@@ -59,8 +63,8 @@ public class PracticeVectorConfig {
         private String indexName = "practice_knowledge_chunks";
         /** ES 用户名（开启安全认证时使用） */
         private String username = "elastic";
-        /** ES 密码 */
-        private String password = "elastic123";
+        /** ES 密码（通过 yml 或环境变量注入，不硬编码） */
+        private String password;
         /** 连接超时毫秒 */
         private int connectTimeout = 5000;
         /** 读取超时毫秒 */
@@ -107,15 +111,15 @@ public class PracticeVectorConfig {
         rt.setInterceptors(Collections.singletonList((request, body, execution) -> {
             String username = es.getUsername();
             String password = es.getPassword();
-            System.out.println("[ES拦截器] username=" + username + ", password=" + (password != null ? "***" : "null"));
-            if (username != null && !username.isBlank()) {
+            if (username != null && !username.isBlank() && password != null && !password.isBlank()) {
                 String credentials = username + ":" + password;
                 String encoded = Base64.getEncoder().encodeToString(
                         credentials.getBytes(StandardCharsets.UTF_8));
                 request.getHeaders().set("Authorization", "Basic " + encoded);
-                System.out.println("[ES拦截器] Authorization 头已添加");
+                log.debug("[ES拦截器] Basic Auth 认证头已添加, user={}", username);
             } else {
-                System.out.println("[ES拦截器] WARNING: username 为空，未添加认证头！");
+                log.warn("[ES拦截器] ES 认证信息未配置(username={}, password={})，跳过认证",
+                        username, password != null ? "***" : "null");
             }
             return execution.execute(request, body);
         }));

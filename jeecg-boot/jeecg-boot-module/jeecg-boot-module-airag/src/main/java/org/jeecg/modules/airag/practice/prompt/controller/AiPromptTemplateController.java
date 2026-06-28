@@ -11,7 +11,6 @@ import org.jeecg.common.api.vo.Result;
 import org.jeecg.common.system.base.controller.JeecgController;
 import org.jeecg.common.system.query.QueryGenerator;
 import org.jeecg.common.util.oConvertUtils;
-import org.jeecg.config.shiro.IgnoreAuth;
 import org.jeecg.modules.airag.practice.prompt.entity.AiPromptTemplate;
 import org.jeecg.modules.airag.practice.prompt.service.IAiPromptTemplateService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,7 +50,6 @@ public class AiPromptTemplateController
      * 分页查询
      * 前端传 pageNo、pageSize、以及任意字段名作为过滤条件
      */
-    @IgnoreAuth
     @GetMapping("/list")
     @Operation(summary = "分页查询")
     public Result<IPage<AiPromptTemplate>> list(
@@ -73,7 +71,6 @@ public class AiPromptTemplateController
     /**
      * 新增
      */
-    @IgnoreAuth
     @PostMapping("/add")
     @Operation(summary = "新增模板")
     public Result<String> add(@RequestBody AiPromptTemplate template) {
@@ -98,7 +95,6 @@ public class AiPromptTemplateController
     /**
      * 修改
      */
-    @IgnoreAuth
     @PutMapping("/edit")
     @Operation(summary = "修改模板")
     public Result<String> edit(@RequestBody AiPromptTemplate template) {
@@ -112,7 +108,6 @@ public class AiPromptTemplateController
     /**
      * 删除（支持批量，id 用逗号分隔）
      */
-    @IgnoreAuth
     @DeleteMapping("/delete")
     @Operation(summary = "删除模板")
     public Result<String> delete(@RequestParam String ids) {
@@ -126,7 +121,6 @@ public class AiPromptTemplateController
     /**
      * 按 ID 查询
      */
-    @IgnoreAuth
     @GetMapping("/queryById")
     @Operation(summary = "按ID查询模板")
     public Result<AiPromptTemplate> queryById(@RequestParam String id) {
@@ -141,7 +135,6 @@ public class AiPromptTemplateController
      * 按编码查最新启用版本
      * 这是实际 AI 调用时最常用的查询方式
      */
-    @IgnoreAuth
     @GetMapping("/active/{code}")
     @Operation(summary = "按编码查最新启用版本")
     public Result<AiPromptTemplate> getActiveByCode(@PathVariable String code) {
@@ -160,7 +153,6 @@ public class AiPromptTemplateController
      * Body: {"userQuestion": "做一个用户注册功能"}
      * 返回：替换变量后的完整 Prompt 文本
      */
-    @IgnoreAuth
     @PostMapping("/render/{id}")
     @Operation(summary = "渲染模板（变量替换）")
     public Result<String> render(@PathVariable String id, @RequestBody Map<String, String> variables) {

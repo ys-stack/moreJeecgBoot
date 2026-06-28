@@ -5,7 +5,6 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jeecg.common.api.vo.Result;
-import org.jeecg.config.shiro.IgnoreAuth;
 import org.jeecg.modules.airag.practice.tool.service.ToolChatService;
 import org.jeecg.modules.airag.practice.tool.vo.ToolChatResponse;
 import org.springframework.web.bind.annotation.*;
@@ -26,7 +25,6 @@ public class ToolChatController {
     /**
      * Tool Calling 同步对话
      */
-    @IgnoreAuth
     @PostMapping("/chat")
     public Result<ToolChatResponse> chatWithTools(@RequestBody ToolChatRequest request) {
         if (StringUtils.isBlank(request.getMessage())) {
@@ -56,7 +54,6 @@ public class ToolChatController {
      *
      * 直接写 HttpServletResponse 输出流，避免 SseEmitter 的 async dispatch 与 Shiro 冲突。
      */
-    @IgnoreAuth
     @PostMapping(value = "/chat/stream", produces = "text/event-stream;charset=UTF-8")
     public void chatStream(@RequestBody ToolChatRequest request, HttpServletResponse response) {
         log.info("[ToolChatStream] 收到流式请求: {}", request.getMessage());

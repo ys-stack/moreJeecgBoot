@@ -217,27 +217,67 @@ public class VectorStoreService {
      * @return 相似分片列表（按 Rerank 分数降序）
      */
     public List<VectorSearchResultVO> search(String query, int topK, String knowledgeBaseId) {
+        // 构建单知识库 filter（term）
+        JSONObject filter = null;
+        if (knowledgeBaseId != null && !knowledgeBaseId.isBlank()) {
+            JSONObject term = new JSONObject();
+            term.put("knowledge_base_id", knowledgeBaseId);
+            filter = new JSONObject();
+            filter.put("term", term);
+        }
+        return executeSearch(query, topK, filter, "向量检索");
+    }
+
+    /**
+     * 向量检索：支持多知识库过滤（权限过滤场景）
+     *
+     * @param query             用户查询文本
+     * @param topK              返回条数
+     * @param knowledgeBaseIds  允许访问的知识库ID列表（为空则搜索全部）
+     * @return 相似分片列表
+     */
+    public List<VectorSearchResultVO> searchByKnowledgeBaseIds(String query, int topK, List<String> knowledgeBaseIds) {
+        if (knowledgeBaseIds == null || knowledgeBaseIds.isEmpty()) {
+            return search(query, topK, null);
+        }
+        if (knowledgeBaseIds.size() == 1) {
+            return search(query, topK, knowledgeBaseIds.get(0));
+        }
+        // 多知识库用 terms filter
+        JSONObject terms = new JSONObject();
+        terms.put("knowledge_base_id", knowledgeBaseIds);
+        JSONObject filter = new JSONObject();
+        filter.put("terms", terms);
+        return executeSearch(query, topK, filter, "多知识库向量检索");
+    }
+
+    /**
+     * 通用检索流程：Embedding → kNN 粗召回 → Rerank 精排
+     *
+     * @param query   用户查询文本
+     * @param topK    返回条数
+     * @param filter  ES filter（可为 null，null 则搜索全部）
+     * @param logTag  日志标签
+     * @return 相似分片列表
+     */
+    private List<VectorSearchResultVO> executeSearch(String query, int topK, JSONObject filter, String logTag) {
         ensureIndex();
 
-        // 1. 将查询文本向量化
         float[] queryVector = embeddingService.embed(query);
 
-        // 2. kNN 粗召回：取 topK * 4 候选，给 Rerank 留足余量
         int recallSize = topK * 4;
-        List<VectorSearchResultVO> candidates = knnSearch(queryVector, recallSize, knowledgeBaseId);
+        List<VectorSearchResultVO> candidates = knnSearch(queryVector, recallSize, filter);
 
         if (candidates.isEmpty()) {
             return Collections.emptyList();
         }
 
-        // 3. Rerank 精排：Cross-Encoder 重排序，取 topK
+        // Rerank 精排
         List<String> candidateTexts = candidates.stream()
                 .map(VectorSearchResultVO::getContent)
                 .collect(Collectors.toList());
-
         List<RerankService.RerankResult> rerankResults = rerankService.rerank(query, candidateTexts, topK);
 
-        // 4. 按 Rerank 分数重组结果
         List<VectorSearchResultVO> finalResults = new ArrayList<>();
         for (RerankService.RerankResult rr : rerankResults) {
             if (rr.getIndex() < candidates.size()) {
@@ -247,19 +287,19 @@ public class VectorStoreService {
             }
         }
 
-        log.info("向量检索完成: query='{}', kNN召回={}, Rerank返回={}", query, candidates.size(), finalResults.size());
+        log.info("{}完成: query='{}', kNN召回={}, Rerank返回={}", logTag, query, candidates.size(), finalResults.size());
         return finalResults;
     }
 
     /**
      * kNN 粗召回（纯向量检索，不做 Rerank）
      *
-     * @param queryVector     查询向量
-     * @param size            召回数量
-     * @param knowledgeBaseId 知识库过滤（可选）
+     * @param queryVector 查询向量
+     * @param size        召回数量
+     * @param filter      ES filter（可为 null）
      * @return 候选分片列表
      */
-    private List<VectorSearchResultVO> knnSearch(float[] queryVector, int size, String knowledgeBaseId) {
+    private List<VectorSearchResultVO> knnSearch(float[] queryVector, int size, JSONObject filter) {
         JSONObject body = new JSONObject();
 
         JSONObject knn = new JSONObject();
@@ -268,11 +308,7 @@ public class VectorStoreService {
         knn.put("k", size);
         knn.put("num_candidates", size * 10);
 
-        if (knowledgeBaseId != null && !knowledgeBaseId.isBlank()) {
-            JSONObject filter = new JSONObject();
-            JSONObject term = new JSONObject();
-            term.put("knowledge_base_id", knowledgeBaseId);
-            filter.put("term", term);
+        if (filter != null) {
             knn.put("filter", filter);
         }
 
@@ -319,102 +355,6 @@ public class VectorStoreService {
 
         } catch (Exception e) {
             log.error("ES kNN 粗召回失败", e);
-            throw new RuntimeException("向量检索失败: " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * 向量检索：支持多知识库过滤（权限过滤场景）
-     *
-     * @param query             用户查询文本
-     * @param topK              返回条数
-     * @param knowledgeBaseIds  允许访问的知识库ID列表（为空则搜索全部）
-     * @return 相似分片列表
-     */
-    public List<VectorSearchResultVO> searchByKnowledgeBaseIds(String query, int topK, List<String> knowledgeBaseIds) {
-        // 如果没有知识库限制或列表为空，走原有的全量搜索
-        if (knowledgeBaseIds == null || knowledgeBaseIds.isEmpty()) {
-            return search(query, topK, null);
-        }
-        // 如果只有一个知识库ID，走原有的单ID搜索
-        if (knowledgeBaseIds.size() == 1) {
-            return search(query, topK, knowledgeBaseIds.get(0));
-        }
-
-        ensureIndex();
-        float[] queryVector = embeddingService.embed(query);
-
-        // kNN 粗召回：多知识库过滤用 terms
-        int recallSize = topK * 4;
-        JSONObject body = new JSONObject();
-        JSONObject knn = new JSONObject();
-        knn.put("field", "chunk_vector");
-        knn.put("query_vector", floatArrayToList(queryVector));
-        knn.put("k", recallSize);
-        knn.put("num_candidates", recallSize * 10);
-
-        JSONObject filter = new JSONObject();
-        JSONObject terms = new JSONObject();
-        terms.put("knowledge_base_id", knowledgeBaseIds);
-        filter.put("terms", terms);
-        knn.put("filter", filter);
-
-        body.put("knn", knn);
-        body.put("_source", List.of("chunk_id", "document_id", "knowledge_base_id",
-                "chunk_text", "heading_path", "chunk_index", "source_file_name"));
-        body.put("size", recallSize);
-
-        String url = "http://" + config.getEs().getClusterNodes() + "/"
-                + config.getEs().getIndexName() + "/_search";
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        HttpEntity<String> entity = new HttpEntity<>(body.toJSONString(), headers);
-
-        try {
-            ResponseEntity<String> resp = practiceEsRestTemplate.exchange(url, HttpMethod.POST, entity, String.class);
-            JSONObject result = JSON.parseObject(resp.getBody());
-            JSONObject hits = result.getJSONObject("hits");
-            if (hits == null || hits.getJSONArray("hits") == null) {
-                return Collections.emptyList();
-            }
-            List<VectorSearchResultVO> candidates = new ArrayList<>();
-            JSONArray hitsArray = hits.getJSONArray("hits");
-            for (int i = 0; i < hitsArray.size(); i++) {
-                JSONObject hit = hitsArray.getJSONObject(i);
-                JSONObject source = hit.getJSONObject("_source");
-                float score = hit.getFloatValue("_score");
-                candidates.add(VectorSearchResultVO.builder()
-                        .chunkId(source.getString("chunk_id"))
-                        .documentId(source.getString("document_id"))
-                        .knowledgeBaseId(source.getString("knowledge_base_id"))
-                        .content(source.getString("chunk_text"))
-                        .headingPath(source.getString("heading_path"))
-                        .score(score)
-                        .sourceFileName(source.getString("source_file_name"))
-                        .chunkIndex(source.getInteger("chunk_index"))
-                        .build());
-            }
-
-            // Rerank 精排
-            List<String> candidateTexts = candidates.stream()
-                    .map(VectorSearchResultVO::getContent)
-                    .collect(Collectors.toList());
-            List<RerankService.RerankResult> rerankResults = rerankService.rerank(query, candidateTexts, topK);
-
-            List<VectorSearchResultVO> finalResults = new ArrayList<>();
-            for (RerankService.RerankResult rr : rerankResults) {
-                if (rr.getIndex() < candidates.size()) {
-                    VectorSearchResultVO candidate = candidates.get(rr.getIndex());
-                    candidate.setScore(rr.getScore());
-                    finalResults.add(candidate);
-                }
-            }
-
-            log.info("多知识库向量检索完成: query='{}', topK={}, KB数={}, kNN召回={}, Rerank返回={}",
-                    query, topK, knowledgeBaseIds.size(), candidates.size(), finalResults.size());
-            return finalResults;
-        } catch (Exception e) {
-            log.error("多知识库向量检索失败", e);
             throw new RuntimeException("向量检索失败: " + e.getMessage(), e);
         }
     }

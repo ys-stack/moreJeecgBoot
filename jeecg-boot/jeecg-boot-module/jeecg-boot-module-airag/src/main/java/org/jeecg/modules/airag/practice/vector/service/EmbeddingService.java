@@ -194,18 +194,16 @@ public class EmbeddingService {
     }
 
     /**
-     * 重试耗尽后的降级方法：返回零向量
+     * 重试耗尽后的降级方法：抛出异常（不返回零向量，避免污染 ES 索引）
+     *
+     * 零向量的 cosine similarity 无意义，写入 ES 后会导致检索结果全部匹配。
+     * 抛出异常让上层感知失败，BatchParse 会将文档标记为 vectorize_failed。
      * 参数和返回值必须与 callEmbeddingApi 一致
      */
     @Recover
     public List<float[]> callEmbeddingApiRecover(RuntimeException e, List<String> texts) {
-        log.error("Embedding API 重试耗尽，降级返回零向量，文本数={}", texts.size(), e);
-        int dims = config.getEmbed().getDimensions();
-        List<float[]> fallback = new ArrayList<>(texts.size());
-        for (int i = 0; i < texts.size(); i++) {
-            fallback.add(new float[dims]);
-        }
-        return fallback;
+        log.error("Embedding API 重试耗尽，拒绝降级（零向量会污染索引），文本数={}", texts.size(), e);
+        throw new RuntimeException("Embedding API 重试耗尽，无法向量化: " + e.getMessage(), e);
     }
 
     // ==================== 内部方法 ====================

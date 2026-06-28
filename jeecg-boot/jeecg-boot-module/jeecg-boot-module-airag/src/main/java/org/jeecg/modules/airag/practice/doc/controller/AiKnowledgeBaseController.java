@@ -12,7 +12,6 @@ import org.jeecg.common.api.vo.Result;
 import org.jeecg.common.system.base.controller.JeecgController;
 import org.jeecg.common.system.query.QueryGenerator;
 import org.jeecg.common.util.oConvertUtils;
-import org.jeecg.config.shiro.IgnoreAuth;
 import org.jeecg.modules.airag.practice.doc.entity.AiKnowledgeBase;
 import org.jeecg.modules.airag.practice.doc.service.IAiKnowledgeBaseService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,7 +48,6 @@ public class AiKnowledgeBaseController
      * 分页查询
      * 支持按 name（模糊）、status 过滤
      */
-    @IgnoreAuth
     @GetMapping("/list")
     @Operation(summary = "分页查询知识库")
     public Result<IPage<AiKnowledgeBase>> list(
@@ -68,7 +66,6 @@ public class AiKnowledgeBaseController
     /**
      * 全量列表（不分页，用于下拉选择）
      */
-    @IgnoreAuth
     @GetMapping("/listAll")
     @Operation(summary = "全量知识库列表（下拉选择用）")
     public Result<?> listAll() {
@@ -81,7 +78,6 @@ public class AiKnowledgeBaseController
     /**
      * 新增知识库
      */
-    @IgnoreAuth
     @PostMapping("/add")
     @Operation(summary = "新增知识库")
     public Result<String> add(@RequestBody AiKnowledgeBase kb) {
@@ -106,7 +102,6 @@ public class AiKnowledgeBaseController
     /**
      * 修改知识库
      */
-    @IgnoreAuth
     @PutMapping("/edit")
     @Operation(summary = "修改知识库")
     public Result<String> edit(@RequestBody AiKnowledgeBase kb) {
@@ -121,7 +116,6 @@ public class AiKnowledgeBaseController
     /**
      * 删除知识库（级联删除文档和分片）
      */
-    @IgnoreAuth
     @DeleteMapping("/delete")
     @Operation(summary = "删除知识库（级联删除文档和分片）")
     public Result<String> delete(@RequestParam String ids) {
@@ -138,7 +132,6 @@ public class AiKnowledgeBaseController
     /**
      * 按ID查询知识库
      */
-    @IgnoreAuth
     @GetMapping("/queryById")
     @Operation(summary = "按ID查询知识库")
     public Result<AiKnowledgeBase> queryById(@RequestParam String id) {

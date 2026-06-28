@@ -3,7 +3,6 @@ package org.jeecg.modules.airag.practice.controller;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.jeecg.common.api.vo.Result;
-import org.jeecg.config.shiro.IgnoreAuth;
 import org.jeecg.modules.airag.practice.service.IPracticeChatService;
 import org.jeecg.modules.airag.practice.vo.PracticeChatRequest;
 import org.jeecg.modules.airag.practice.vo.PracticeChatResponse;
@@ -29,7 +28,6 @@ public class PracticeChatController {
     /**
      * 普通聊天 - 同步返回
      */
-    @IgnoreAuth
     @PostMapping(value = "/send")
     public Result<PracticeChatResponse> chat(@RequestBody PracticeChatRequest request) {
         if (request.getMessage() == null || request.getMessage().isBlank()) {
@@ -48,7 +46,6 @@ public class PracticeChatController {
      * 用浏览器或 Postman 直接访问，能看到逐字输出的效果。
      * 前端对接时用 EventSource 或 fetch + ReadableStream。
      */
-    @IgnoreAuth
     @PostMapping(value = "/stream")
     public SseEmitter chatStream(@RequestBody PracticeChatRequest request) {
         return practiceChatService.chatStream(request);
@@ -63,7 +60,6 @@ public class PracticeChatController {
      * 这个接口展示了 Prompt 工程的实际应用：
      * 通过 System Prompt 约束模型输出格式，让程序可以直接解析和使用。
      */
-    @IgnoreAuth
     @PostMapping(value = "/structured")
     public Result<PracticeChatResponse> chatStructured(@RequestBody PracticeChatRequest request) {
         if (request.getMessage() == null || request.getMessage().isBlank()) {

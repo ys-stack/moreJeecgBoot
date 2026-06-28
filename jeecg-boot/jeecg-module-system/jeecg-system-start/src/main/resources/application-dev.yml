@@ -422,7 +422,7 @@ practice:
     max-tokens: 2048
     timeout-seconds: 60
   embed:
-    api-key: sk-vtdmalkhusnptcjkqckhcjyotmugkxywjhjlqewhziddpwip
+    api-key: ${PRACTICE_EMBED_API_KEY:}
     base-url: https://api.siliconflow.cn/v1
     model-name: BAAI/bge-m3
     dimensions: 1024
@@ -431,7 +431,7 @@ practice:
 #    cluster-nodes: 192.168.234.128:9200
     cluster-nodes: 192.168.163.128:9200
     username: elastic
-    password: elastic123
+    password: ${PRACTICE_ES_PASSWORD:elastic123}
     index-name: practice_knowledge_chunks
   parser:
     url: http://localhost:8000

@@ -212,7 +212,7 @@ public class BatchParseServiceImpl implements BatchParseService {
             // ---------- 更新知识库计数 ----------
             updateKnowledgeBaseCounts(kbId);
 
-            // ---------- 向量化入 ES（失败不影响结果） ----------
+            // ---------- 向量化入 ES（失败时标记状态，便于后续重试） ----------
             int vectorizedCount = 0;
             if (vectorStoreService != null && !chunkEntities.isEmpty()) {
                 try {
@@ -221,7 +221,9 @@ public class BatchParseServiceImpl implements BatchParseService {
                     aiDocumentMapper.updateById(doc);
                     log.info("向量化完成: documentId={}, vectors={}", documentId, vectorizedCount);
                 } catch (Exception e) {
-                    log.warn("向量化失败（不影响解析结果）: documentId={}, error={}", documentId, e.getMessage());
+                    log.warn("向量化失败: documentId={}, error={}", documentId, e.getMessage());
+                    doc.setStatus("vectorize_failed");
+                    aiDocumentMapper.updateById(doc);
                 }
             }
 
@@ -328,7 +330,18 @@ public class BatchParseServiceImpl implements BatchParseService {
                 }
             }
 
+            // 路径穿越防护：检查提取后的文件名是否包含目录遍历字符
+            if (safeName == null || safeName.isBlank()
+                    || safeName.contains("..") || safeName.contains("/") || safeName.contains("\\")) {
+                throw new SecurityException("非法文件名（疑似路径穿越攻击）: " + originalName);
+            }
+
             Path target = dir.resolve(safeName);
+            // 二次校验：确保解析后的绝对路径仍在预期目录内
+            if (!target.toAbsolutePath().normalize().startsWith(dir.toAbsolutePath().normalize())) {
+                throw new SecurityException("文件保存路径越界（路径穿越）: " + originalName);
+            }
+
             Files.copy(new ByteArrayInputStream(file.content()), target, StandardCopyOption.REPLACE_EXISTING);
             String relativePath = "practice/doc/" + documentId + "/" + safeName;
             log.info("原始文件已保存: {}", target);
@@ -361,16 +374,20 @@ public class BatchParseServiceImpl implements BatchParseService {
     }
 
     private void updateKnowledgeBaseCounts(String knowledgeBaseId) {
+        // 单条 SQL 统计文档数和分片数（替代逐文档 COUNT 的 N+1 查询）
         List<AiDocument> docs = aiDocumentMapper.selectList(
                 new LambdaQueryWrapper<AiDocument>()
                         .eq(AiDocument::getKnowledgeBaseId, knowledgeBaseId));
         int docCount = docs.size();
+
         int chunkCount = 0;
-        for (AiDocument d : docs) {
-            Long cnt = aiDocumentChunkMapper.selectCount(
+        if (!docs.isEmpty()) {
+            List<String> docIds = docs.stream().map(AiDocument::getId).collect(Collectors.toList());
+            // 批量查询所有相关分片，一次 SQL 完成计数
+            Long total = aiDocumentChunkMapper.selectCount(
                     new LambdaQueryWrapper<AiDocumentChunk>()
-                            .eq(AiDocumentChunk::getDocumentId, d.getId()));
-            chunkCount += cnt != null ? cnt.intValue() : 0;
+                            .in(AiDocumentChunk::getDocumentId, docIds));
+            chunkCount = total != null ? total.intValue() : 0;
         }
 
         AiKnowledgeBase kb = aiKnowledgeBaseMapper.selectById(knowledgeBaseId);

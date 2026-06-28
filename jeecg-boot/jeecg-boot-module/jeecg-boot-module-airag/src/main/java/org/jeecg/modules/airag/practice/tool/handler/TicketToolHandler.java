@@ -132,11 +132,23 @@ public class TicketToolHandler extends AbstractToolHandler {
 
     /**
      * 生成工单编号：TK + 日期 + 4位序号
-     * 简化实现：用时间戳后4位，生产环境建议用序列号表
+     * 从 DB 查询当天最大序号并递增，synchronized 防并发碰撞。
+     * 格式：TK20260628xxxx
      */
-    private String generateTicketNo() {
+    private synchronized String generateTicketNo() {
         String datePart = new SimpleDateFormat("yyyyMMdd").format(new Date());
-        String seqPart = String.format("%04d", (int) (System.currentTimeMillis() % 10000));
-        return "TK" + datePart + seqPart;
+        String prefix = "TK" + datePart;
+
+        // 查询当天最大工单号
+        String maxNo = aiWorkTicketMapper.selectMaxTicketNo(prefix);
+        int nextSeq = 1;
+        if (maxNo != null && maxNo.length() > prefix.length()) {
+            try {
+                nextSeq = Integer.parseInt(maxNo.substring(prefix.length())) + 1;
+            } catch (NumberFormatException ignored) {
+                // 解析失败从 1 开始
+            }
+        }
+        return prefix + String.format("%04d", nextSeq);
     }
 }

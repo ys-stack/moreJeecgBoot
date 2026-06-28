@@ -4,7 +4,6 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 import jakarta.annotation.Resource;
-import org.jeecg.config.shiro.IgnoreAuth;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocument;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocumentChunk;
@@ -60,7 +59,6 @@ public class AiDocumentChunkController {
      * @param knowledgeBaseId 知识库ID（可选，为空则使用默认知识库）
      * @return 上传结果，含分片统计和前5条预览
      */
-    @IgnoreAuth
     @PostMapping("/upload")
     @Operation(summary = "上传文档并解析切分")
     public Result<DocumentUploadResultVO> upload(
@@ -80,7 +78,6 @@ public class AiDocumentChunkController {
     /**
      * 查询某文档的所有分片
      */
-    @IgnoreAuth
     @GetMapping("/chunks/{documentId}")
     @Operation(summary = "查询文档分片列表")
     public Result<List<AiDocumentChunk>> listChunks(@PathVariable String documentId) {
@@ -91,7 +88,6 @@ public class AiDocumentChunkController {
     /**
      * 删除某文档及其所有分片
      */
-    @IgnoreAuth
     @DeleteMapping("/{documentId}")
     @Operation(summary = "删除文档及其所有分片")
     public Result<Integer> deleteDocument(@PathVariable String documentId) {
@@ -104,7 +100,6 @@ public class AiDocumentChunkController {
     /**
      * 查询所有知识库
      */
-    @IgnoreAuth
     @GetMapping("/kb/list")
     @Operation(summary = "查询所有知识库")
     public Result<List<AiKnowledgeBase>> listKnowledgeBases() {
@@ -115,7 +110,6 @@ public class AiDocumentChunkController {
     /**
      * 查询某知识库下的文档列表
      */
-    @IgnoreAuth
     @GetMapping("/kb/{kbId}/docs")
     @Operation(summary = "查询知识库下的文档列表")
     public Result<List<AiDocument>> listDocsByKnowledgeBase(@PathVariable String kbId) {

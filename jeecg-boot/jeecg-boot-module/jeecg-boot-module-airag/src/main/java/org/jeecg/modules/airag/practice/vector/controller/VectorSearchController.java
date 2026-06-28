@@ -4,7 +4,6 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 import jakarta.annotation.Resource;
-import org.jeecg.config.shiro.IgnoreAuth;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocument;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocumentChunk;
@@ -51,7 +50,6 @@ public class VectorSearchController {
      *
      * 流程：查 MySQL 拿 chunks → 批量 Embedding → bulk 写入 ES
      */
-    @IgnoreAuth
     @PostMapping("/vectorize/{documentId}")
     @Operation(summary = "文档分片向量化并写入ES")
     public Result<Integer> vectorize(@PathVariable String documentId) {
@@ -87,7 +85,6 @@ public class VectorSearchController {
      *
      * 流程：query Embedding → ES kNN 搜索 → 返回 topK chunk
      */
-    @IgnoreAuth
     @PostMapping("/search")
     @Operation(summary = "向量语义检索")
     public Result<List<VectorSearchResultVO>> search(@RequestBody VectorSearchRequestVO request) {
@@ -107,7 +104,6 @@ public class VectorSearchController {
     /**
      * 删除某文档的向量数据
      */
-    @IgnoreAuth
     @DeleteMapping("/{documentId}")
     @Operation(summary = "删除文档向量数据")
     public Result<Long> deleteVectors(@PathVariable String documentId) {
@@ -123,7 +119,6 @@ public class VectorSearchController {
     /**
      * 查看某文档在 ES 中的向量状态
      */
-    @IgnoreAuth
     @GetMapping("/status/{documentId}")
     @Operation(summary = "查看文档向量状态")
     public Result<Long> vectorStatus(@PathVariable String documentId) {
