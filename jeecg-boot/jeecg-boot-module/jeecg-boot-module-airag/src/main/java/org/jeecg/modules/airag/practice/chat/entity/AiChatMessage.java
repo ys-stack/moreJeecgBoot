@@ -85,4 +85,8 @@ public class AiChatMessage implements Serializable {
     @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     @Schema(description = "创建日期")
     private Date createTime;
+
+    @Schema(description = "工具调用详情JSON")
+    private String toolCalls;
+
 }

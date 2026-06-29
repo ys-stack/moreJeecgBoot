@@ -37,6 +37,9 @@ public class ToolChatResponse {
     /** 是否有工具等待用户确认（前端据此展示确认 UI） */
     private boolean needsConfirm;
 
+    private String sessionId;       // 返回给前端，下次对话带上
+    private String sessionTitle;    // 会话标题（首次对话时返回）
+
     /**
      * 单次工具调用的详细信息
      */

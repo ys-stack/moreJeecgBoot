@@ -11,8 +11,13 @@ import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletResponse;
 import org.apache.shiro.SecurityUtils;
+import org.apache.tika.utils.StringUtils;
 import org.jeecg.common.system.vo.LoginUser;
 import lombok.extern.slf4j.Slf4j;
+import org.jeecg.modules.airag.practice.chat.entity.AiChatMessage;
+import org.jeecg.modules.airag.practice.chat.entity.AiChatSession;
+import org.jeecg.modules.airag.practice.chat.mapper.AiChatMessageMapper;
+import org.jeecg.modules.airag.practice.chat.mapper.AiChatSessionMapper;
 import org.jeecg.modules.airag.practice.tool.cons.ToolCons;
 import org.jeecg.modules.airag.practice.tool.controller.ToolChatController;
 import org.jeecg.modules.airag.practice.tool.handler.ToolHandler;
@@ -46,6 +51,10 @@ public class ToolChatService {
 
     @Resource
     private ToolCallingService toolCallingService;
+    @Resource
+    private AiChatMessageMapper aiChatMessageMapper;
+    @Resource
+    private AiChatSessionMapper aiChatSessionMapper;
 
     @Value("${practice.ai.model-name:mimo-v2.5-pro}")
     private String modelName;
@@ -262,6 +271,25 @@ public class ToolChatService {
         if (request.getConfirmTools() == null) {
             request.setConfirmTools(Collections.emptyList());
         }
+        //会话管理
+        AiChatSession session;
+        LoginUser sysUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+        if (StringUtils.isBlank(sessionId)) {
+            //创建新会话
+            session = createSession(request, sysUser);
+        }else {
+            session = aiChatSessionMapper.selectById(sessionId);
+        }
+
+        //保存用户消息
+        AiChatMessage userMsg = new AiChatMessage()
+                .setSessionId(session.getId())
+                .setRole("user")
+                .setContent(request.getMessage())
+                .setStatus("success")
+                .setCreateBy(sysUser.getId())
+                .setCreateTime(new Date());
+        aiChatMessageMapper.insert(userMsg);
 
         ToolCallingService.ToolBundle bundle = toolCallingService.buildToolMap();
         if (bundle.isEmpty()) {
@@ -347,6 +375,28 @@ public class ToolChatService {
                 .content("抱歉，我尝试了 " + MAX_ROUNDS + " 轮推理但还没得出最终答案。")
                 .model(modelName).costMs(System.currentTimeMillis() - startTime)
                 .rounds(rounds).toolCalls(allToolCallDetails).build();
+    }
+
+    /*
+     * @Author: ys
+     * @Date: 2026/6/29 星期一 22:51
+     * @Desc: 创建新会话
+     */
+    private AiChatSession createSession(ToolChatController.ToolChatRequest request, LoginUser sysUser) {
+        AiChatSession session = new AiChatSession()
+                .setTitle(request.getMessage().length() > 50
+                        ? request.getMessage().substring(0, 50) + "..."
+                        : request.getMessage())
+                .setUserId(sysUser.getId())
+                .setModelProvider("openai")
+                .setModelName(modelName)
+                .setStatus("active")
+                .setMessageCount(0)
+                .setCreateBy(sysUser.getId())
+                .setCreateTime(new Date());
+        aiChatSessionMapper.insert(session);
+        log.info("Tool Chat 会话创建成功: id={}, title='{}'", session.getId(), session.getTitle());
+        return session;
     }
 
     private ToolChatResponse fallbackChat(String userMessage, long startTime) {
