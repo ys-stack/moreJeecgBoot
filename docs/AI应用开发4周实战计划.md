@@ -332,6 +332,86 @@ Python 评测脚本 + Agent 调试：
 
 ---
 
+## 阶段总结：第 3 周前三天实战回顾（截至 2026-06-29）
+
+### 已完成功能全景
+
+三天内完成了从 Tool Calling 基础设施搭建到 Agent 多步推理循环的完整链路，涉及 30+ 个 Java 文件、6 个子包、2 个前端页面，以及 4 个 SQL 脚本。
+
+**Day 1：Tool Calling 基础设施**
+
+| 功能模块 | 实现内容 | 技术选型 |
+| --- | --- | --- |
+| 工具定义表 | `ai_tool_definition`：toolCode、description、parametersSchema（JSON Schema）、endpointType、handlerRef、requireConfirm 等 | MySQL + MyBatis-Plus |
+| 工具调用日志表 | `ai_tool_call_log`：sessionId、toolCode、inputParams、outputResult、status、durationMs、modelName | MySQL + MyBatis-Plus |
+| 工单实体 | `ai_work_ticket`：ticketNo（TK+日期+4位序号）、title、ticketType、priority、status、assignee、requester | 自增工单号生成器 |
+| ToolHandler 接口 | `execute(String argumentsJson) → String`，三个实现类：OrderToolHandler（订单查询）、UserToolHandler（用户模糊搜索）、TicketToolHandler（工单创建） | 策略模式，Spring Bean 动态查找 |
+| 工具管理前端 | 工具定义 CRUD（新增/编辑弹窗 + 删除确认）、调用日志分页查看（按工具/状态筛选）、展开行显示参数 Schema 和调用入参/结果 | Vue 3 + Ant Design Vue + defHttp |
+| JSON Schema 解析 | 数据库中的 `parametersSchema` JSON → LangChain4j `JsonObjectSchema`，支持 string/integer/number/boolean/enum 五种类型 | Jackson + `JsonObjectSchema.Builder` |
+| 种子数据 | 3 条工具定义 SQL（queryOrder / queryUser / createTicket），parametersSchema 与 Handler 实际接收参数严格对齐 | `docs/sql/20260624_tool_seed_data.sql` |
+
+**Day 2：工具安全与审计**
+
+| 功能模块 | 实现内容 | 技术选型 |
+| --- | --- | --- |
+| 参数校验框架 | `ParamValidator` 工具类（required / maxLength / matchPattern / inEnum / noInjection）+ `AbstractToolHandler` 抽象基类，模板方法模式：`execute()` 用 `final` 锁死"校验→执行"流程，子类只覆写 `validate()` 和 `doExecute()` | 模板方法模式 + 正则白名单 |
+| 工具级权限 | `ai_tool_role_permission` 关联表（tool_id + role_code），`ToolCallingService.buildToolMap()` 加载工具时按当前用户角色过滤，无权限的工具不会出现在模型的工具列表中 | 多对多关联表 + Shiro 角色解析 |
+| 数据级权限 | `ToolContext`（ThreadLocal）在 ToolCallingService 执行器中 set/clear，Handler 内部通过 `getCurrentUser()` 获取用户信息做数据过滤（部门隔离）和字段脱敏（手机号掩码、邮箱隐藏） | ThreadLocal + 模板方法钩子 |
+| 写操作确认 | `ConfirmRequestStore`（ConcurrentHashMap + @Scheduled 定时清理），`PendingToolCall` 暂存待确认请求（5 分钟过期），`/confirm-execute` 和 `/cancel` 接口 | 内存暂存 + UUID Token |
+| 审计日志 | ToolExecutor 包装层统一记录：工具名、输入参数、输出结果（截断 2000 字符）、执行耗时、状态（success/error/pending_confirm/cancelled）、调用人 | AOP 式包装 + `ai_tool_call_log` 表 |
+
+**Day 3：Agent 状态循环 + 工程整合**
+
+| 功能模块 | 实现内容 | 技术选型 |
+| --- | --- | --- |
+| Agent 执行引擎 | `ToolChatService`：最大 5 轮循环，每轮模型思考→判断是否调工具→执行→结果喂回→继续或结束。支持同步和 SSE 流式两种模式 | LangChain4j `chatModel.chat(messages, specs)` + 手动循环控制 |
+| SSE 事件流 | 6 种事件类型：`thinking`（模型思考中）、`message`（逐 token 流式输出）、`tool_call`（工具调用请求）、`tool_result`（工具执行结果）、`confirm`（写操作确认请求）、`done`/`error` | 原生 `HttpServletResponse` 直写（避免 Shiro/SseEmitter 异步冲突） |
+| 确认流程整合 | Agent 循环中检测 `requireConfirm==1` 时暂停循环，发送 `confirm` SSE 事件，前端弹确认卡片；用户确认后下次请求携带 `confirmTools` 列表，循环恢复执行 | 循环中断 + 请求状态传递 |
+| 架构重构 | `ToolCallingDispatcher` 精简为纯 Schema 解析器（只保留 `parseSchema`），`ToolCallingService` 承担全部职责（权限过滤 + 执行 + 审计），消除双重执行 bug 和空方法 | 职责单一原则 |
+| 代码质量加固 | 移除 27 处 `@IgnoreAuth`（恢复 Shiro 鉴权）、API 密钥外部化（`${PRACTICE_ES_PASSWORD}`）、工单号改用 `MAX(ticket_no)` 递增防碰撞、`DocParserClient` 增加熔断器（连续失败 3 次熔断 60 秒）、`VectorStoreService` 提取公共 `executeSearch()` 消除重复代码 | P0/P1/P2 三级修复 |
+
+### 关键技术收获
+
+**1. Tool Calling 的本质是"协议"，不是"框架魔法"**
+
+LangChain4j 的 Tool Calling 拆开看就三件事：你把 `ToolSpecification`（工具说明书）和消息一起发给模型；模型如果觉得需要工具，返回的不是文本而是 `ToolExecutionRequest`（"我想调 queryOrder，参数是这些"）；你执行完把 `ToolExecutionResultMessage` 追加到消息列表，再调一次模型让它看到结果。整个过程没有任何黑盒，理解这个协议后，不管换 Spring AI 还是手写 HTTP 调用 OpenAI 接口，逻辑都一样。
+
+**2. 模板方法模式在安全层的应用**
+
+`AbstractToolHandler` 用 `final` 锁死 `execute()` 方法，强制所有工具都走"解析参数 → 校验 → 执行 → 异常处理"的统一流程。这比在每个 Handler 里手写校验代码安全得多——不可能有人绕过校验直接执行业务逻辑。这个模式在做企业级开发时非常实用：把安全规则固化在框架层，业务开发者只需要关注 `validate()` 和 `doExecute()` 两个方法。
+
+**3. 权限过滤要在"模型看到工具之前"做**
+
+工具级权限控制的精髓不是"调了再拒绝"，而是"根本不让模型知道有那个工具"。`buildToolMap()` 在构建 ToolSpecification 列表时就按角色过滤，模型收到的工具列表里压根没有 `createTicket`（如果用户是普通员工），从根源上杜绝了越权调用。这比在 Handler 里做 if 判断更安全，也更节省 token。
+
+**4. ThreadLocal 的生命周期管理是隐性 bug 的重灾区**
+
+`ToolContext` 通过 ThreadLocal 传递用户信息给 Handler，但在 SSE 流式场景下使用的是线程池。如果忘记 `clearContext()`，下一个请求可能拿到上一个请求的用户上下文，导致 A 用户以 B 用户的身份执行操作。`finally` 块里的 `clearContext()` 是绝对必须的，而且 ToolCallingService 特意提供了 `buildToolMap(LoginUser)` 重载，支持在 Shiro Subject 不可用的异步线程中手动传入用户。
+
+**5. Agent 循环的关键是"终止条件"**
+
+5 轮最大限制看似简单，但它是 Agent 不失控的关键安全阀。没有这个限制，模型可能陷入"调工具 → 结果不满意 → 再调工具"的无限循环。终止条件有三个：模型给出文本回复（自然结束）、达到最大轮数（强制结束）、用户中断（外部取消）。实际使用中大多数查询类问题 1-2 轮就结束了，只有"查订单发现超时然后创建工单"这种复合任务才会用到 3-4 轮。
+
+**6. SSE 直写 HttpServletResponse 的取舍**
+
+标准的 `SseEmitter` 在 JeecgBoot + Shiro 环境下会有异步兼容问题（Shiro Filter 不支持 async context）。直接用 `HttpServletResponse.getWriter()` 写 SSE 事件流虽然更原始，但完全可控。代价是需要手动处理 `Content-Type: text/event-stream`、`Cache-Control: no-cache`、flush 和连接关闭，以及客户端断开的检测。
+
+**7. 参数校验的"白名单思维"**
+
+校验参数不是过滤黑名单（"不允许这些字符"），而是定义白名单（"只允许这些格式"）。订单号只允许 `^[A-Za-z0-9\-]{1,50}$`，工单类型只能是 `bug/feature/task/incident` 四个枚举值。白名单思维让攻击面最小化，即使模型幻觉出一个带 SQL 片段的参数，也会因为不符合正则而被拒绝。
+
+### 面试话术参考
+
+如果被问到"Tool Calling 怎么做的"，可以这样组织回答：
+
+> 我在 RAG 问答平台上扩展了 Tool Calling 能力，让 AI 从纯问答变成能执行业务操作的智能 Agent。工具定义存在数据库里，JSON Schema 描述参数格式，通过 handlerRef 指向 Spring Bean，新增工具只需建表记录 + 写 Handler 类，零代码修改即可扩展。安全层面做了三层：第一层用模板方法模式在抽象基类里锁死参数校验流程（正则白名单 + 枚举约束 + 长度限制），第二层基于角色-工具权限关联表做工具级过滤（模型压根看不到没权限的工具），第三层通过 ThreadLocal 传递用户上下文让 Handler 内部做数据级权限和字段脱敏。写操作有二次确认流程，用 ConcurrentHashMap 暂存待确认请求，前端弹确认卡片，5 分钟超时自动失效。所有工具调用自动记录审计日志，包括入参、结果、耗时、状态。Agent 循环最大 5 轮，支持 SSE 流式输出 6 种事件类型（thinking/message/tool_call/tool_result/confirm/done）。
+
+如果被追问"为什么不用 Spring AI 的 @Tool 注解"，可以回答：
+
+> 项目早期选型用了 LangChain4j，它的 ToolSpecification + ToolExecutor 机制更底层、更可控。@Tool 注解虽然简洁但封装太深，我需要手动控制 Agent 循环的每一轮（记录中间状态、暂停等待用户确认、SSE 事件推送），用注解做不到这么细的粒度。而且 LangChain4j 的 `hasToolExecutionRequests()` API 让我能精确控制"模型要不要调工具"的判断逻辑，而不是框架黑盒处理。
+
+---
+
 ## 第 4 周：评测、安全、成本、部署
 
 目标：让项目达到"生产可用"水平，能拿出手面试讲。
