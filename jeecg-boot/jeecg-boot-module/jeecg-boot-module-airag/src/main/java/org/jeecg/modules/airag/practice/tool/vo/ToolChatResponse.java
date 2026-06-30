@@ -39,6 +39,8 @@ public class ToolChatResponse {
 
     private String sessionId;       // 返回给前端，下次对话带上
     private String sessionTitle;    // 会话标题（首次对话时返回）
+    private String parentMessageId;
+    private String role;
 
     /**
      * 单次工具调用的详细信息

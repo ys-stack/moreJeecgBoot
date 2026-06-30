@@ -10,8 +10,8 @@ import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletResponse;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.shiro.SecurityUtils;
-import org.apache.tika.utils.StringUtils;
 import org.jeecg.common.system.vo.LoginUser;
 import lombok.extern.slf4j.Slf4j;
 import org.jeecg.modules.airag.practice.chat.entity.AiChatMessage;
@@ -59,7 +59,13 @@ public class ToolChatService {
     @Value("${practice.ai.model-name:mimo-v2.5-pro}")
     private String modelName;
 
+    //最大调用次数
     private static final int MAX_ROUNDS = 5;
+    //加载最近多少条历史消息
+    private static final int COUNT_HISTORY_MSG = 10;
+    //token瓶颈
+    private static final int TOKEN_MAX_BUDGET = 3000;
+
 
     public ToolChatService(@Qualifier("practiceChatModel") OpenAiChatModel chatModel,
                            @Qualifier("practiceStreamingChatModel") OpenAiStreamingChatModel streamingChatModel) {
@@ -267,6 +273,8 @@ public class ToolChatService {
         String userMessage = request.getMessage();
         String sessionId = request.getSessionId();
         String messageId = UUID.randomUUID().toString();
+        String finalContent = null;
+        String toolCallsJson = null;
 
         if (request.getConfirmTools() == null) {
             request.setConfirmTools(Collections.emptyList());
@@ -297,10 +305,37 @@ public class ToolChatService {
         }
 
         List<ChatMessage> messages = new ArrayList<>();
+        int usedTokens = 0;
+        //加载最近的历史消息喂给大模型，若session记录摘要也可传递
+        List<AiChatMessage> chatMsgList = aiChatMessageMapper.loadRecentMessages(session.getId(),COUNT_HISTORY_MSG);
+        for (int i = 0; i < chatMsgList.size(); i++) {
+            AiChatMessage histMsg  = chatMsgList.get(i);
+            // token 估算：中文 1 字 ≈ 1.5 token
+            int msgTokens = estimateTokens(histMsg.getContent());
+            if (StringUtils.isNotBlank(histMsg.getToolCalls())) {
+                msgTokens += estimateTokens(histMsg.getToolCalls());
+            }
+            if (usedTokens + msgTokens > TOKEN_MAX_BUDGET) {
+                break;  // 超预算，停止加载更早的消息
+            }
+            usedTokens += msgTokens;
+            if ("user".equals(histMsg.getRole())) {
+                messages.add(new UserMessage(histMsg.getContent()));
+            } else if ("assistant".equals(histMsg.getRole())) {
+                // 还原工具调用链
+                if (StringUtils.isNotBlank(histMsg.getToolCalls())) {
+                    restoreToolCallChain(messages, histMsg);
+                } else {
+                    messages.add(new AiMessage(histMsg.getContent()));
+                }
+            }
+        }
+        //当前用户消息
         messages.add(new UserMessage(userMessage));
 
         List<ToolCallDetail> allToolCallDetails = new ArrayList<>();
         int rounds = 0;
+        boolean needConfirm = false;
 
         for (int round = 1; round <= MAX_ROUNDS; round++) {
             rounds = round;
@@ -313,17 +348,15 @@ public class ToolChatService {
             ChatResponse response = chatModel.chat(chatRequest);
             AiMessage aiMessage = response.aiMessage();
 
+            //无需调用工具给出最终回复
             if (!aiMessage.hasToolExecutionRequests()) {
-                return ToolChatResponse.builder()
-                        .content(aiMessage.text()).model(modelName)
-                        .costMs(System.currentTimeMillis() - startTime).rounds(rounds)
-                        .toolCalls(allToolCallDetails).build();
+                finalContent = aiMessage.text();
+                break;
             }
 
             List<ToolExecutionRequest> toolRequests = aiMessage.toolExecutionRequests();
             messages.add(aiMessage);
 
-            boolean needConfirm = false;
             for (ToolExecutionRequest toolRequest : toolRequests) {
                 String toolName = toolRequest.name();
                 String argsJson = toolRequest.arguments();
@@ -364,17 +397,91 @@ public class ToolChatService {
             }
 
             if (needConfirm) {
-                return ToolChatResponse.builder()
-                        .content("以下操作需要您确认后才会执行").model(modelName)
-                        .costMs(System.currentTimeMillis() - startTime).rounds(rounds)
-                        .toolCalls(allToolCallDetails).needsConfirm(true).build();
+                finalContent = "以下操作需要您确认后才会执行";
+                toolCallsJson = JSON.toJSONString(allToolCallDetails);
+                break;
             }
         }
+        if (!(rounds < MAX_ROUNDS) && finalContent != null) {
+            finalContent = "抱歉，我尝试了 " + MAX_ROUNDS + " 轮...";
+        }
+        //记录摘要
+        AiChatMessage aiMsg = new AiChatMessage()
+                .setSessionId(session.getId())
+                .setParentMessageId(userMsg.getId())
+                .setRole("assistant")
+                .setContent(finalContent)
+                .setToolCalls(toolCallsJson)
+                .setModelName(modelName)
+                .setDurationMs(System.currentTimeMillis() - startTime)
+                .setStatus("success")
+                .setCreateBy(sysUser.getId())
+                .setCreateTime(new Date());
+        aiChatMessageMapper.insert(aiMsg);
 
         return ToolChatResponse.builder()
-                .content("抱歉，我尝试了 " + MAX_ROUNDS + " 轮推理但还没得出最终答案。")
-                .model(modelName).costMs(System.currentTimeMillis() - startTime)
-                .rounds(rounds).toolCalls(allToolCallDetails).build();
+                .sessionId(session.getId())
+                .sessionTitle(session.getTitle())
+                .content(finalContent)
+                .toolCalls(allToolCallDetails)
+                .model(modelName)
+                .costMs(System.currentTimeMillis() - startTime)
+                .rounds(rounds)
+                .needsConfirm(needConfirm)
+                .build();
+    }
+
+    /*
+     * @Author: ys
+     * @Date: 2026/6/30 星期二 23:19
+     * @Desc: 还原历史工具调用为 LangChain4j 消息
+     */
+    private void restoreToolCallChain(List<ChatMessage> messages, AiChatMessage histMsg) {
+        List<ToolCallDetail> details = JSON.parseArray(histMsg.getToolCalls(), ToolCallDetail.class);
+
+        // 1. 构建 tool execution requests
+        List<ToolExecutionRequest> requests = new ArrayList<>();
+        for (int i = 0; i < details.size(); i++) {
+            ToolCallDetail item = details.get(i);
+            if (!"success".equals(item.getStatus())) continue;  // 跳过得确认未执行的
+            requests.add(ToolExecutionRequest.builder()
+                    .id("hist_" + histMsg.getId() + "_" + i)
+                    .name(item.getToolCode())
+                    .arguments(item.getInputParams())
+                    .build());
+        }
+
+        if (!requests.isEmpty()) {
+            // 2. 加一条"模型决定调工具"的消息
+            messages.add(new AiMessage(requests));
+
+            // 3. 加每条工具执行结果
+            int idx = 0;
+            for (ToolCallDetail d : details) {
+                if (!"success".equals(d.getStatus())) continue;
+                messages.add(ToolExecutionResultMessage.from(
+                        requests.get(idx), d.getOutputResult()));
+                idx++;
+            }
+        }
+        // 4. 加模型的最终回答
+        if (StringUtils.isNotBlank(histMsg.getContent())) {
+            messages.add(new AiMessage(histMsg.getContent()));
+        }
+    }
+
+    /*
+     * @Author: ys
+     * @Date: 2026/6/30 星期二 23:18
+     * @Desc: 估算token，1中文≈1.5
+     */
+    private int estimateTokens(String text) {
+        if (text == null) return 0;
+        int chineseChars = 0;
+        for (char c : text.toCharArray()) {
+            if (c >= 0x4e00 && c <= 0x9fff) chineseChars++;
+        }
+        return (int) (chineseChars * 1.5 + (text.length() - chineseChars) * 0.75);
     }
 
     /*

@@ -1,0 +1,1 @@
+ALTER TABLE ai_chat_message ADD INDEX idx_session_time (session_id, create_time DESC);
