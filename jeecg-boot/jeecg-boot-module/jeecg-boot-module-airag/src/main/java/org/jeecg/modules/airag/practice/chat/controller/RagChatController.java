@@ -3,12 +3,15 @@ package org.jeecg.modules.airag.practice.chat.controller;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.Resource;
+import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.shiro.SecurityUtils;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.modules.airag.practice.chat.entity.AiChatMessage;
 import org.jeecg.modules.airag.practice.chat.entity.AiChatSession;
+import org.jeecg.modules.airag.practice.chat.entity.AiToolChatCase;
+import org.jeecg.modules.airag.practice.chat.service.ConversationMemoryService;
 import org.jeecg.modules.airag.practice.chat.service.RagChatService;
 import org.jeecg.modules.airag.practice.chat.vo.RagChatRequest;
 import org.jeecg.modules.airag.practice.chat.vo.RagChatResponse;
@@ -44,6 +47,8 @@ public class RagChatController {
 
     @Resource
     private RagChatService ragChatService;
+    @Resource
+    private ConversationMemoryService conversationMemoryService;
 
     /**
      * RAG 聊天 - 核心接口
@@ -142,5 +147,81 @@ public class RagChatController {
     private String getLoginUserId() {
         LoginUser sysUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
         return sysUser.getId();
+    }
+
+    /**
+     * 生成会话结束总结（用户手动触发）
+     * POST /practice/rag/sessions/{sessionId}/summary
+     *
+     * 对全部对话内容做结构化总结：主题 / 关键信息 / 完成操作 / 待跟进
+     * 总结会覆盖到 session.summary 字段
+     */
+    @PostMapping("/sessions/{sessionId}/summary")
+    @Operation(summary = "生成会话结束总结")
+    public Result<String> generateSessionSummary(@PathVariable String sessionId) {
+        try {
+            String summary = conversationMemoryService.generateSessionEndSummary(sessionId);
+            return Result.OK(summary);
+        } catch (Exception e) {
+            log.error("生成会话总结失败: {}", e.getMessage(), e);
+            return Result.error("生成总结失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 将会话保存为测试用例
+     * POST /practice/rag/sessions/{sessionId}/save-case
+     *
+     * 请求体：
+     * {
+     *   "caseName": "查询订单正常流程",
+     *   "scenario": "order_query",
+     *   "description": "用户询问订单B100状态，系统正确调用queryOrder返回结果",
+     *   "expectedTools": "queryOrder"
+     * }
+     *
+     * 自动从消息中提取实际调用的工具，与 expectedTools 比对判断是否通过
+     */
+    @PostMapping("/sessions/{sessionId}/save-case")
+    @Operation(summary = "保存会话为测试用例")
+    public Result<AiToolChatCase> saveAsCase(@PathVariable String sessionId,
+                                             @RequestBody SaveCaseRequest  caseRequest) {
+        if (caseRequest.getCaseName() == null || caseRequest.getCaseName().isBlank()) {
+            return Result.error("用例名称不能为空");
+        }
+        try {
+            String userId = getLoginUserId();
+            AiToolChatCase chatCase = conversationMemoryService.saveAsCase(
+                    sessionId,
+                    caseRequest.getCaseName(),
+                    caseRequest.getScenario(),
+                    caseRequest.getDescription(),
+                    caseRequest.getExpectedTools(),
+                    userId);
+            return Result.OK(chatCase);
+        } catch (Exception e) {
+            log.error("保存用例失败: {}", e.getMessage(), e);
+            return Result.error("保存用例失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 查询测试用例列表
+     * GET /practice/rag/cases?scenario=order_query
+     */
+    @GetMapping("/cases")
+    @Operation(summary = "查询测试用例列表")
+    public Result<List<AiToolChatCase>> listCases(
+            @RequestParam(required = false) String scenario) {
+        List<AiToolChatCase> cases = conversationMemoryService.listCases(scenario);
+        return Result.OK(cases);
+    }
+
+    @Data
+    public static class SaveCaseRequest {
+        private String caseName;
+        private String scenario;
+        private String description;
+        private String expectedTools;
     }
 }

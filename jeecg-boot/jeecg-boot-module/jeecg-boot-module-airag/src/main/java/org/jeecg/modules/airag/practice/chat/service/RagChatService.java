@@ -75,6 +75,9 @@ public class RagChatService {
     @Resource
     private IAiKnowledgeBaseService knowledgeBaseService;
 
+    @Resource
+    private ConversationMemoryService conversationMemoryService;
+
     /** RAG 系统提示词：约束模型基于检索到的上下文回答 */
     private static final String RAG_SYSTEM_PROMPT = """
             你是一个知识库问答助手。请严格根据以下【参考资料】来回答用户的问题。
@@ -116,10 +119,11 @@ public class RagChatService {
                 throw new RuntimeException("会话不存在: " + request.getSessionId());
             }
         }
+        String sessionId = session.getId();
 
         // ==================== Step 2: 保存用户消息 ====================
         AiChatMessage userMsg = new AiChatMessage()
-                .setSessionId(session.getId())
+                .setSessionId(sessionId)
                 .setRole("user")
                 .setContent(request.getQuery())
                 .setStatus("success")
@@ -146,7 +150,7 @@ public class RagChatService {
                 request.getQuery(), accessibleKbIds.size(), searchResults.size());
 
         // ==================== Step 4: 构建 LangChain4j 消息列表 ====================
-        List<ChatMessage> messages = buildRagMessages(searchResults, session.getId(), request.getQuery());
+        List<ChatMessage> messages = buildRagMessages(searchResults, sessionId, request.getQuery());
 
         // ==================== Step 5: 调用大模型 ====================
         long startTime = System.currentTimeMillis();
@@ -169,14 +173,13 @@ public class RagChatService {
 
             // ==================== Step 6: 保存 AI 回答消息 ====================
             AiChatMessage assistantMsg = new AiChatMessage()
-                    .setSessionId(session.getId())
+                    .setSessionId(sessionId)
                     .setParentMessageId(userMsg.getId())
                     .setRole("assistant")
                     .setContent(answer)
                     .setPromptTokens(promptTokens)
                     .setCompletionTokens(completionTokens)
-                    .setTotalTokens(promptTokens != null && completionTokens != null
-                            ? promptTokens + completionTokens : 0)
+                    .setTotalTokens(promptTokens != null && completionTokens != null ? promptTokens + completionTokens : 0)
                     .setRagContext(ragContextJson)
                     .setRagChunkCount(searchResults.size())
                     .setModelProvider("openai")
@@ -186,6 +189,9 @@ public class RagChatService {
                     .setCreateBy(userId)
                     .setCreateTime(new Date());
             messageMapper.insert(assistantMsg);
+
+            // 异步检查是否需要生成/更新摘要（消息数超阈值时在后台线程池触发，不阻塞当前请求）
+            conversationMemoryService.maybeGenerateSummaryAsync(session.getId());
 
             // ==================== Step 7: 更新会话（首条消息自动生成标题） ====================
             updateSessionAfterChat(session, userMsg.getId());
@@ -259,10 +265,11 @@ public class RagChatService {
                 return emitter;
             }
         }
+        String sessionId = session.getId();
 
         // Step 2: 保存用户消息
         AiChatMessage userMsg = new AiChatMessage()
-                .setSessionId(session.getId())
+                .setSessionId(sessionId)
                 .setRole("user")
                 .setContent(request.getQuery())
                 .setStatus("success")
@@ -358,7 +365,8 @@ public class RagChatService {
                                 .setCreateBy(userId)
                                 .setCreateTime(new Date());
                         messageMapper.insert(assistantMsg);
-
+                        // 异步检查是否需要生成/更新摘要
+                        conversationMemoryService.maybeGenerateSummaryAsync(session.getId());
                         // 更新会话
                         updateSessionAfterChat(session, userMsg.getId());
 
@@ -454,22 +462,18 @@ public class RagChatService {
         String systemPrompt = RAG_SYSTEM_PROMPT + "\n\n【参考资料】\n" + contextText;
         messages.add(new SystemMessage(systemPrompt));
 
-        // 2. 历史对话（用于多轮对话上下文，最多取最近5条避免超出 token 限制）
-        List<AiChatMessage> history = listRecentMessages(sessionId, 5);
-        for (AiChatMessage histMsg : history) {
-            if ("user".equals(histMsg.getRole())) {
-                messages.add(new UserMessage(histMsg.getContent()));
-            } else if ("assistant".equals(histMsg.getRole()) && "success".equals(histMsg.getStatus())) {
-                messages.add(new AiMessage(histMsg.getContent()));
-            }
-        }
+        // 2. 历史对话（滑动窗口 + 摘要压缩，由 ConversationMemoryService 统一管理）
+        //    返回结构：[SystemMessage: 摘要(如果有)] + [最近N条 UserMessage/AiMessage]
+        List<ChatMessage> historyMessages = conversationMemoryService.buildHistoryMessages(sessionId);
+        messages.addAll(historyMessages);
 
         // 3. 当前用户问题
         messages.add(new UserMessage(currentQuery));
 
-        log.debug("RAG 消息列表构建完成: systemPrompt长度={}, 历史消息{}条, 总消息{}条",systemPrompt.length(), history.size(), messages.size());
+        log.debug("RAG 消息列表构建完成: systemPrompt长度={}, 历史消息{}条, 总消息{}条",systemPrompt.length(), historyMessages.size(), messages.size());
         return messages;
     }
+
 
 
     /**
@@ -565,20 +569,5 @@ public class RagChatService {
                     .collect(Collectors.toList());
         }
         return knowledgeBaseService.listAccessibleByUser(roleCodes);
-    }
-
-    /**
-     * 获取最近 N 条历史消息（按时间倒序取 N 条，再按时间正序返回）
-     */
-    private List<AiChatMessage> listRecentMessages(String sessionId, int limit) {
-        LambdaQueryWrapper<AiChatMessage> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(AiChatMessage::getSessionId, sessionId)
-                .in(AiChatMessage::getRole, "user", "assistant")
-                .orderByDesc(AiChatMessage::getCreateTime)
-                .last("LIMIT " + limit);
-        List<AiChatMessage> recent = messageMapper.selectList(wrapper);
-        // 反转为正序（最早的在前）
-        java.util.Collections.reverse(recent);
-        return recent;
     }
 }

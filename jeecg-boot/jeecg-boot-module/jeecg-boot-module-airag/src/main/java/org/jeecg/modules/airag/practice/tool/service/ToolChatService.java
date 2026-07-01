@@ -18,6 +18,7 @@ import org.jeecg.modules.airag.practice.chat.entity.AiChatMessage;
 import org.jeecg.modules.airag.practice.chat.entity.AiChatSession;
 import org.jeecg.modules.airag.practice.chat.mapper.AiChatMessageMapper;
 import org.jeecg.modules.airag.practice.chat.mapper.AiChatSessionMapper;
+import org.jeecg.modules.airag.practice.chat.service.ConversationMemoryService;
 import org.jeecg.modules.airag.practice.tool.cons.ToolCons;
 import org.jeecg.modules.airag.practice.tool.controller.ToolChatController;
 import org.jeecg.modules.airag.practice.tool.handler.ToolHandler;
@@ -55,6 +56,8 @@ public class ToolChatService {
     private AiChatMessageMapper aiChatMessageMapper;
     @Resource
     private AiChatSessionMapper aiChatSessionMapper;
+    @Resource
+    private ConversationMemoryService conversationMemoryService;
 
     @Value("${practice.ai.model-name:mimo-v2.5-pro}")
     private String modelName;
@@ -95,7 +98,9 @@ public class ToolChatService {
         LoginUser currentUser = null;
         try {
             currentUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+            throw new RuntimeException("用户未登录!");
+        }
 
         long startTime = System.currentTimeMillis();
         String userMessage = request.getMessage();
@@ -105,6 +110,26 @@ public class ToolChatService {
         if (request.getConfirmTools() == null) {
             request.setConfirmTools(Collections.emptyList());
         }
+        //获取会话session
+        //会话管理
+        AiChatSession session;
+        if (StringUtils.isBlank(sessionId)) {
+            //创建新会话
+            session = createSession(request, currentUser);
+        }else {
+            session = aiChatSessionMapper.selectById(sessionId);
+            sessionId = session.getId();
+        }
+
+        //保存用户消息
+        AiChatMessage userMsg = new AiChatMessage()
+                .setSessionId(sessionId)
+                .setRole("user")
+                .setContent(request.getMessage())
+                .setStatus("success")
+                .setCreateBy(currentUser.getId())
+                .setCreateTime(new Date());
+        aiChatMessageMapper.insert(userMsg);
 
         // 加载工具
         ToolCallingService.ToolBundle bundle = toolCallingService.buildToolMap(currentUser);
@@ -114,8 +139,41 @@ public class ToolChatService {
             return;
         }
 
+        //加载历史消息
         List<ChatMessage> messages = new ArrayList<>();
+        int usedTokens = 0;
+        //加载最近的历史消息喂给大模型，若session记录摘要也可传递
+        if (StringUtils.isNotBlank(session.getSummary())) {
+            String summaryText = "以下是本次对话之前历史的摘要，包含了早期的关键信息，请参考：\n" + session.getSummary();
+            messages.add(new SystemMessage(summaryText));
+        }
+        List<AiChatMessage> chatMsgList = aiChatMessageMapper.loadRecentMessages(session.getId(),COUNT_HISTORY_MSG);
+        for (int i = 0; i < chatMsgList.size(); i++) {
+            AiChatMessage histMsg  = chatMsgList.get(i);
+            // token 估算：中文 1 字 ≈ 1.5 token
+            int msgTokens = estimateTokens(histMsg.getContent());
+            if (StringUtils.isNotBlank(histMsg.getToolCalls())) {
+                msgTokens += estimateTokens(histMsg.getToolCalls());
+            }
+            if (usedTokens + msgTokens > TOKEN_MAX_BUDGET) {
+                break;  // 超预算，停止加载更早的消息
+            }
+            usedTokens += msgTokens;
+            if ("user".equals(histMsg.getRole())) {
+                messages.add(new UserMessage(histMsg.getContent()));
+            } else if ("assistant".equals(histMsg.getRole())) {
+                // 还原工具调用链
+                if (StringUtils.isNotBlank(histMsg.getToolCalls())) {
+                    restoreToolCallChain(messages, histMsg);
+                } else {
+                    messages.add(new AiMessage(histMsg.getContent()));
+                }
+            }
+        }
         messages.add(new UserMessage(userMessage));
+        String finalContent = null;
+        String toolCallsJson = null;
+        List<ToolCallDetail> allToolCallDetails = new ArrayList<>();
 
         try {
             for (int round = 1; round <= MAX_ROUNDS; round++) {
@@ -179,6 +237,29 @@ public class ToolChatService {
                 // ---------- 情况 A：模型直接给出文本回答 ----------
                 if (!aiMessage.hasToolExecutionRequests()) {
                     long costMs = System.currentTimeMillis() - startTime;
+                    finalContent = aiMessage.text();
+                    // 序列化工具调用记录（如果之前有调过工具）
+                    if (!allToolCallDetails.isEmpty()) {
+                        toolCallsJson = JSON.toJSONString(allToolCallDetails);
+                    }
+
+                    //记录摘要
+                    AiChatMessage aiMsg = new AiChatMessage()
+                            .setSessionId(session.getId())
+                            .setParentMessageId(userMsg.getId())
+                            .setRole("assistant")
+                            .setContent(finalContent)
+                            .setToolCalls(toolCallsJson)
+                            .setModelName(modelName)
+                            .setDurationMs(costMs)
+                            .setStatus("success")
+                            .setCreateBy(currentUser.getId())
+                            .setCreateTime(new Date());
+                    aiChatMessageMapper.insert(aiMsg);
+
+                    // 异步检查是否需要生成/更新摘要
+                    conversationMemoryService.maybeGenerateSummaryAsync(session.getId());
+
                     sendSse(writer, "done", JSON.toJSONString(Map.of(
                             "model", modelName, "costMs", costMs, "rounds", round)));
                     writer.flush();
@@ -223,6 +304,12 @@ public class ToolChatService {
                                 "status", result.contains("\"error\"") ? "error" : "success",
                                 "durationMs", toolDuration)));
                         writer.flush();
+                        // 执行成功后，收集工具调用详情
+                        allToolCallDetails.add(ToolCallDetail.builder()
+                                .toolCode(toolName).toolName(def.getToolName())
+                                .inputParams(argsJson).outputResult(result)
+                                .status(result.contains("\"error\"") ? "error" : "success")
+                                .durationMs(toolDuration).build());
 
                         messages.add(ToolExecutionResultMessage.from(toolRequest, result));
                     } else {
@@ -233,12 +320,38 @@ public class ToolChatService {
                                 "outputResult", result, "status", "error", "durationMs", 0)));
                         writer.flush();
 
+                        allToolCallDetails.add(ToolCallDetail.builder()
+                                .toolCode(toolName)
+                                .toolName(toolName)
+                                .inputParams(argsJson)
+                                .outputResult(result)
+                                .status("error")
+                                .durationMs(0)
+                                .build());
+
                         messages.add(ToolExecutionResultMessage.from(toolRequest, result));
                     }
                 }
 
                 if (needConfirm) {
                     long costMs = System.currentTimeMillis() - startTime;
+                    finalContent = "以下操作需要您确认后才会执行";
+                    toolCallsJson = JSON.toJSONString(allToolCallDetails);
+
+                    // 保存 assistant 消息（含待确认的工具调用）
+                    AiChatMessage aiMsg = new AiChatMessage()
+                            .setSessionId(session.getId())
+                            .setParentMessageId(userMsg.getId())
+                            .setRole("assistant")
+                            .setContent(finalContent)
+                            .setToolCalls(toolCallsJson)
+                            .setModelName(modelName)
+                            .setDurationMs(costMs)
+                            .setStatus("success")
+                            .setCreateBy(currentUser.getId())
+                            .setCreateTime(new Date());
+                    aiChatMessageMapper.insert(aiMsg);
+
                     sendSse(writer, "done", JSON.toJSONString(Map.of(
                             "model", modelName, "costMs", costMs, "rounds", round, "needsConfirm", true)));
                     writer.flush();
@@ -306,7 +419,12 @@ public class ToolChatService {
 
         List<ChatMessage> messages = new ArrayList<>();
         int usedTokens = 0;
+
         //加载最近的历史消息喂给大模型，若session记录摘要也可传递
+        if (StringUtils.isNotBlank(session.getSummary())) {
+            String summaryText = "以下是本次对话之前历史的摘要，包含了早期的关键信息，请参考：\n" + session.getSummary();
+            messages.add(new SystemMessage(summaryText));
+        }
         List<AiChatMessage> chatMsgList = aiChatMessageMapper.loadRecentMessages(session.getId(),COUNT_HISTORY_MSG);
         for (int i = 0; i < chatMsgList.size(); i++) {
             AiChatMessage histMsg  = chatMsgList.get(i);
@@ -402,8 +520,12 @@ public class ToolChatService {
                 break;
             }
         }
-        if (!(rounds < MAX_ROUNDS) && finalContent != null) {
-            finalContent = "抱歉，我尝试了 " + MAX_ROUNDS + " 轮...";
+        if (rounds >= MAX_ROUNDS && finalContent == null) {
+            finalContent = "抱歉，我尝试了 " + MAX_ROUNDS + " 轮仍无法得出最终答案，请换个问题试试";
+            toolCallsJson = JSON.toJSONString(allToolCallDetails);
+        }
+        if (toolCallsJson == null && !allToolCallDetails.isEmpty()) {
+            toolCallsJson = JSON.toJSONString(allToolCallDetails);
         }
         //记录摘要
         AiChatMessage aiMsg = new AiChatMessage()
@@ -418,6 +540,9 @@ public class ToolChatService {
                 .setCreateBy(sysUser.getId())
                 .setCreateTime(new Date());
         aiChatMessageMapper.insert(aiMsg);
+
+        // 异步检查是否需要生成/更新摘要
+        conversationMemoryService.maybeGenerateSummaryAsync(session.getId());
 
         return ToolChatResponse.builder()
                 .sessionId(session.getId())

@@ -88,4 +88,7 @@ public class AiChatSession implements Serializable {
 
     @Schema(description = "租户id")
     private String tenantId;
+
+    @Schema(description = "会话摘要")
+    private String summary;
 }
