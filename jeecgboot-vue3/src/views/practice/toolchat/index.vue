@@ -216,6 +216,8 @@ interface ChatMessage {
 
 interface Session {
   id: string;
+  /** 后端 DB 真实 session ID（雪花ID），首次请求后由后端返回 */
+  backendId?: string;
   title: string;
   messages: ChatMessage[];
 }
@@ -251,6 +253,7 @@ function saveSessions() {
     // 清理运行态字段，只持久化核心数据
     const toSave = sessions.value.map(s => ({
       id: s.id,
+      backendId: s.backendId,
       title: s.title,
       messages: s.messages.map(m => ({
         role: m.role,
@@ -346,7 +349,7 @@ async function doSend(message: string, confirmTools: string[] = []) {
   isLoading.value = true;
 
   try {
-    const body: any = { message, sessionId: currentSessionId.value };
+    const body: any = { message, sessionId: s.backendId || '' };
     if (confirmTools.length > 0) body.confirmTools = confirmTools;
 
     const response = await fetch('/jeecgboot/practice/tool/chat/stream', {
@@ -458,6 +461,10 @@ async function doSend(message: string, confirmTools: string[] = []) {
             msg.loading = false;
             msg.thinking = undefined;
             if (data.needsConfirm) msg.needsConfirm = true;
+            // 保存后端返回的真实 session ID，后续请求使用
+            if (data.sessionId && !s.backendId) {
+              s.backendId = data.sessionId;
+            }
             scrollToBottom();
             break;
           }

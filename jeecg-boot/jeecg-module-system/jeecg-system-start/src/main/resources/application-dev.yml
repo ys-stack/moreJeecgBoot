@@ -416,13 +416,13 @@ justauth:
 practice:
   ai:
     base-url: https://api.xiaomimimo.com/v1
-    api-key: sk-cxc5qukuckxbvoqky3xoqjkt8tb3l50go2u1v14glicooc02
+    api-key: sk-c08vrckex1e2yiill19pkezgdccm25n4n4oaf50ip3udsxs2
     model-name: mimo-v2.5-pro
     temperature: 0.7
     max-tokens: 2048
     timeout-seconds: 60
   embed:
-    api-key: ${PRACTICE_EMBED_API_KEY:}
+    api-key: sk-vtdmalkhusnptcjkqckhcjyotmugkxywjhjlqewhziddpwip
     base-url: https://api.siliconflow.cn/v1
     model-name: BAAI/bge-m3
     dimensions: 1024

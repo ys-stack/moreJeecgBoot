@@ -118,6 +118,11 @@ public class ToolChatService {
             session = createSession(request, currentUser);
         }else {
             session = aiChatSessionMapper.selectById(sessionId);
+            if (session == null) {
+                // 前端传的 sessionId 在 DB 中不存在（如前端本地临时ID），自动创建新会话
+                log.info("sessionId={} 未找到，自动创建新会话", sessionId);
+                session = createSession(request, currentUser);
+            }
             sessionId = session.getId();
         }
 
@@ -134,6 +139,8 @@ public class ToolChatService {
         // 加载工具
         ToolCallingService.ToolBundle bundle = toolCallingService.buildToolMap(currentUser);
         if (bundle.isEmpty()) {
+            long costMs = System.currentTimeMillis() - startTime;
+            saveErrorMessage(sessionId, userMsg.getId(), currentUser.getId(), "没有可用工具", "no_tools", costMs);
             sendSse(writer, "error", "没有可用工具");
             writer.flush();
             return;
@@ -216,12 +223,17 @@ public class ToolChatService {
 
                 // 等待流式响应完成（最多 60 秒）
                 if (!latch.await(60, TimeUnit.SECONDS)) {
+                    long costMs = System.currentTimeMillis() - startTime;
+                    saveErrorMessage(sessionId, userMsg.getId(), currentUser.getId(), "模型响应超时", "timeout", costMs);
                     sendSse(writer, "error", "模型响应超时");
                     writer.flush();
                     return;
                 }
 
                 if (errorHolder[0] != null) {
+                    long costMs = System.currentTimeMillis() - startTime;
+                    saveErrorMessage(sessionId, userMsg.getId(), currentUser.getId(),
+                            "模型调用异常: " + errorHolder[0].getMessage(), errorHolder[0].getMessage(), costMs);
                     sendSse(writer, "error", "模型调用异常: " + errorHolder[0].getMessage());
                     writer.flush();
                     return;
@@ -229,6 +241,8 @@ public class ToolChatService {
 
                 AiMessage aiMessage = aiMessageHolder[0];
                 if (aiMessage == null) {
+                    long costMs = System.currentTimeMillis() - startTime;
+                    saveErrorMessage(sessionId, userMsg.getId(), currentUser.getId(), "模型未返回响应", "null_response", costMs);
                     sendSse(writer, "error", "模型未返回响应");
                     writer.flush();
                     return;
@@ -261,6 +275,7 @@ public class ToolChatService {
                     conversationMemoryService.maybeGenerateSummaryAsync(session.getId());
 
                     sendSse(writer, "done", JSON.toJSONString(Map.of(
+                            "sessionId", session.getId(),
                             "model", modelName, "costMs", costMs, "rounds", round)));
                     writer.flush();
                     return;
@@ -353,6 +368,7 @@ public class ToolChatService {
                     aiChatMessageMapper.insert(aiMsg);
 
                     sendSse(writer, "done", JSON.toJSONString(Map.of(
+                            "sessionId", session.getId(),
                             "model", modelName, "costMs", costMs, "rounds", round, "needsConfirm", true)));
                     writer.flush();
                     return;
@@ -360,11 +376,17 @@ public class ToolChatService {
             }
 
             // 达到最大轮数
+            long maxRoundsCost = System.currentTimeMillis() - startTime;
+            saveErrorMessage(sessionId, userMsg.getId(), currentUser.getId(),
+                    "达到最大推理轮数 " + MAX_ROUNDS + "，停止执行", "max_rounds", maxRoundsCost);
             sendSse(writer, "error", "达到最大推理轮数 " + MAX_ROUNDS + "，停止执行");
             writer.flush();
 
         } catch (Exception e) {
+            long costMs = System.currentTimeMillis() - startTime;
             log.error("[ToolChatStream] 处理异常: {}", e.getMessage(), e);
+            saveErrorMessage(sessionId, userMsg.getId(), currentUser.getId(),
+                    "处理异常: " + e.getMessage(), e.getMessage(), costMs);
             sendSse(writer, "error", "处理异常: " + e.getMessage());
             writer.flush();
         }
@@ -377,6 +399,29 @@ public class ToolChatService {
     private void sendSse(PrintWriter writer, String event, String data) {
         writer.print("event:" + event + "\n");
         writer.print("data:" + data + "\n\n");
+    }
+
+    /**
+     * 保存一条 assistant error 消息到 DB（防止用户消息存了但 assistant 没有对应记录）
+     */
+    private void saveErrorMessage(String sessionId, String parentMsgId, String userId,
+                                  String content, String errorMsg, long costMs) {
+        try {
+            AiChatMessage errRecord = new AiChatMessage()
+                    .setSessionId(sessionId)
+                    .setParentMessageId(parentMsgId)
+                    .setRole("assistant")
+                    .setContent(content)
+                    .setModelName(modelName)
+                    .setDurationMs(costMs)
+                    .setStatus("error")
+                    .setErrorMsg(errorMsg)
+                    .setCreateBy(userId)
+                    .setCreateTime(new Date());
+            aiChatMessageMapper.insert(errRecord);
+        } catch (Exception ex) {
+            log.error("保存 error 消息失败", ex);
+        }
     }
 
     // ======================== 同步接口（保留） ========================
@@ -400,6 +445,10 @@ public class ToolChatService {
             session = createSession(request, sysUser);
         }else {
             session = aiChatSessionMapper.selectById(sessionId);
+            if (session == null) {
+                log.info("sessionId={} 未找到，自动创建新会话", sessionId);
+                session = createSession(request, sysUser);
+            }
         }
 
         //保存用户消息

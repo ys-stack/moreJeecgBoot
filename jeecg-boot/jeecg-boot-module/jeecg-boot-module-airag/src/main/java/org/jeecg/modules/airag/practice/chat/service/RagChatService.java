@@ -78,16 +78,20 @@ public class RagChatService {
     @Resource
     private ConversationMemoryService conversationMemoryService;
 
-    /** RAG 系统提示词：约束模型基于检索到的上下文回答 */
     private static final String RAG_SYSTEM_PROMPT = """
-            你是一个知识库问答助手。请严格根据以下【参考资料】来回答用户的问题。
+        你是一个知识库问答助手。请严格根据以下【参考资料】来回答用户的问题。
 
-            要求：
-            1. 答案必须基于参考资料中的内容，不要编造参考资料中没有的信息
-            2. 尽量引用来源，例如"根据《xxx》文档中的描述..."
-            3. 如果参考资料中没有足够的信息来回答问题，请明确告知用户"参考资料中未找到相关信息，建议补充相关文档到知识库"
-            4. 回答要准确、简洁、有条理
-            """;
+        输出格式要求：
+        1. 使用 Markdown 格式组织回答，合理使用 ## 标题、**加粗**、列表等
+        2. 先给出核心结论，再展开详细说明
+        3. 涉及多个要点时，使用有序或无序列表
+        4. 引用来源时标注，如"根据《xxx》描述..."
+
+        内容要求：
+        1. 答案必须基于参考资料，不要编造资料中没有的信息
+        2. 如果参考资料信息不足，明确告知用户"参考资料中未找到相关信息，建议补充相关文档到知识库"
+        3. 回答要准确、有条理，避免大段堆砌
+        """;
 
     public RagChatService(@Qualifier("practiceChatModel") OpenAiChatModel chatModel,
                           @Qualifier("practiceStreamingChatModel") OpenAiStreamingChatModel streamingChatModel) {
@@ -146,15 +150,20 @@ public class RagChatService {
             searchResults = vectorStoreService.searchByKnowledgeBaseIds(
                     request.getQuery(), topK, accessibleKbIds);
         }
-        log.info("RAG 向量检索完成: query='{}', 可访问KB数={}, 命中 {} 个 chunk",
-                request.getQuery(), accessibleKbIds.size(), searchResults.size());
+        // 过滤低相关度结果（Rerank 分数通常 0~1，阈值设 0.2~0.3 比较合理）
+        double minScore = 0.2;
+        List<VectorSearchResultVO> filteredResults = searchResults.stream()
+                .filter(r -> r.getScore() >= minScore)
+                .collect(Collectors.toList());
+        log.info("RAG 向量检索完成: query='{}', 可访问KB数={}, 命中 {} 个 chunk, 过滤后 {} 个",
+                request.getQuery(), accessibleKbIds.size(), searchResults.size(), filteredResults.size());
 
         // ==================== Step 4: 构建 LangChain4j 消息列表 ====================
-        List<ChatMessage> messages = buildRagMessages(searchResults, sessionId, request.getQuery());
+        List<ChatMessage> messages = buildRagMessages(filteredResults, sessionId, request.getQuery());
 
         // ==================== Step 5: 调用大模型 ====================
         long startTime = System.currentTimeMillis();
-        String ragContextJson = JSON.toJSONString(searchResults);
+        String ragContextJson = JSON.toJSONString(filteredResults);
 
         try {
             ChatResponse chatResponse = chatModel.chat(messages);
@@ -181,7 +190,7 @@ public class RagChatService {
                     .setCompletionTokens(completionTokens)
                     .setTotalTokens(promptTokens != null && completionTokens != null ? promptTokens + completionTokens : 0)
                     .setRagContext(ragContextJson)
-                    .setRagChunkCount(searchResults.size())
+                    .setRagChunkCount(filteredResults.size())
                     .setModelProvider("openai")
                     .setModelName(modelName)
                     .setDurationMs(durationMs)
@@ -202,7 +211,7 @@ public class RagChatService {
                     .userMessageId(userMsg.getId())
                     .assistantMessageId(assistantMsg.getId())
                     .answer(answer)
-                    .references(RagChatResponse.fromSearchResults(searchResults))
+                    .references(RagChatResponse.fromSearchResults(filteredResults))
                     .model(modelName)
                     .durationMs(durationMs)
                     .promptTokens(promptTokens)
@@ -220,7 +229,7 @@ public class RagChatService {
                     .setRole("assistant")
                     .setContent("模型调用失败: " + e.getMessage())
                     .setRagContext(ragContextJson)
-                    .setRagChunkCount(searchResults.size())
+                    .setRagChunkCount(filteredResults.size())
                     .setModelName(modelName)
                     .setDurationMs(durationMs)
                     .setStatus("error")
@@ -294,16 +303,23 @@ public class RagChatService {
         }
         log.info("[{}] RAG 流式检索完成: 可访问KB={}, 命中chunk={}", requestId, accessibleKbIds.size(), searchResults.size());
 
-        // Step 4: 构建消息列表
-        List<ChatMessage> messages = buildRagMessages(searchResults, session.getId(), request.getQuery());
-        String ragContextJson = JSON.toJSONString(searchResults);
+        // 过滤低相关度结果（Rerank 分数通常 0~1，阈值 0.2）
+        double minScore = 0.2;
+        List<VectorSearchResultVO> filteredResults = searchResults.stream()
+                .filter(r -> r.getScore() >= minScore)
+                .collect(Collectors.toList());
+        log.info("[{}] 分数过滤: 原始={}, 过滤后={}, 阈值={}", requestId, searchResults.size(), filteredResults.size(), minScore);
+
+        // Step 4: 构建消息列表（使用过滤后的结果）
+        List<ChatMessage> messages = buildRagMessages(filteredResults, session.getId(), request.getQuery());
+        String ragContextJson = JSON.toJSONString(filteredResults);
 
         // 发送 meta 事件（sessionId + 参考来源），前端据此更新 UI
         try {
             RagChatResponse metaResp = RagChatResponse.builder()
                     .sessionId(session.getId())
                     .userMessageId(userMsg.getId())
-                    .references(RagChatResponse.fromSearchResults(searchResults))
+                    .references(RagChatResponse.fromSearchResults(filteredResults))
                     .model(modelName)
                     .build();
             emitter.send(SseEmitter.event().name("meta").data(JSON.toJSONString(metaResp)));
@@ -357,7 +373,7 @@ public class RagChatService {
                                 .setTotalTokens(promptTokens != null && completionTokens != null
                                         ? promptTokens + completionTokens : 0)
                                 .setRagContext(ragContextJson)
-                                .setRagChunkCount(searchResults.size())
+                                .setRagChunkCount(filteredResults.size())
                                 .setModelProvider("openai")
                                 .setModelName(modelName)
                                 .setDurationMs(costMs)
@@ -365,10 +381,13 @@ public class RagChatService {
                                 .setCreateBy(userId)
                                 .setCreateTime(new Date());
                         messageMapper.insert(assistantMsg);
-                        // 异步检查是否需要生成/更新摘要
-                        conversationMemoryService.maybeGenerateSummaryAsync(session.getId());
-                        // 更新会话
-                        updateSessionAfterChat(session, userMsg.getId());
+                        // 异步检查是否需要生成/更新摘要（非关键操作，失败不影响主流程）
+                        try {
+                            conversationMemoryService.maybeGenerateSummaryAsync(session.getId());
+                            updateSessionAfterChat(session, userMsg.getId());
+                        } catch (Exception ex) {
+                            log.warn("[{}] 摘要/会话更新失败（不影响主流程）", requestId, ex);
+                        }
 
                         try {
                             emitter.send(SseEmitter.event().name("done").data(""));
@@ -390,7 +409,7 @@ public class RagChatService {
                                 .setRole("assistant")
                                 .setContent("模型调用失败: " + error.getMessage())
                                 .setRagContext(ragContextJson)
-                                .setRagChunkCount(searchResults.size())
+                                .setRagChunkCount(filteredResults.size())
                                 .setModelName(modelName)
                                 .setDurationMs(costMs)
                                 .setStatus("error")
@@ -407,7 +426,30 @@ public class RagChatService {
                     }
                 });
             } catch (Exception e) {
+                long costMs = System.currentTimeMillis() - startTime;
                 log.error("[{}] 流式调用启动失败", requestId, e);
+
+                // 补存一条 assistant error 消息（用户消息已存，不能没有对应的 assistant 记录）
+                try {
+                    AiChatMessage errorMsg = new AiChatMessage()
+                            .setSessionId(session.getId())
+                            .setParentMessageId(userMsg.getId())
+                            .setRole("assistant")
+                            .setContent("模型调用失败: " + e.getMessage())
+                            .setModelName(modelName)
+                            .setDurationMs(costMs)
+                            .setStatus("error")
+                            .setErrorMsg(e.getMessage())
+                            .setCreateBy(userId)
+                            .setCreateTime(new Date());
+                    messageMapper.insert(errorMsg);
+                } catch (Exception ex) {
+                    log.error("[{}] 保存 error 消息也失败", requestId, ex);
+                }
+
+                try {
+                    emitter.send(SseEmitter.event().name("error").data("模型调用启动失败: " + e.getMessage()));
+                } catch (Exception ignored) {}
                 emitter.completeWithError(e);
             }
         });

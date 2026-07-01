@@ -128,6 +128,23 @@
   } from '@ant-design/icons-vue';
   import { defHttp } from '/@/utils/http/axios';
   import { getToken } from '/@/utils/auth/index';
+  import MarkdownIt from 'markdown-it';
+  import hljs from 'highlight.js';
+  import 'highlight.js/styles/github.css';
+
+  const md = new MarkdownIt({
+    html: false,
+    linkify: true,
+    typographer: true,
+    highlight(str: string, lang: string) {
+      if (lang && hljs.getLanguage(lang)) {
+        try {
+          return hljs.highlight(str, { language: lang }).value;
+        } catch (_) {}
+      }
+      return '';
+    },
+  });
 
   // ==================== 状态 ====================
   const sessions = ref<any[]>([]);
@@ -365,10 +382,7 @@
   // ==================== 工具方法 ====================
   function formatAnswer(text: string): string {
     if (!text) return '';
-    return text
-      .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="lang-$1">$2</code></pre>')
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\n/g, '<br/>');
+    return md.render(text);
   }
 
   function scrollToBottom() {
@@ -577,12 +591,80 @@
           overflow-x: auto;
           margin: 8px 0;
           font-size: 13px;
+
+          code {
+            background: transparent;
+            padding: 0;
+            border-radius: 0;
+            font-size: 13px;
+          }
         }
         :deep(code) {
           background: #f0f0f0;
           padding: 2px 6px;
           border-radius: 3px;
           font-size: 13px;
+        }
+        :deep(h1),
+        :deep(h2),
+        :deep(h3),
+        :deep(h4) {
+          margin: 14px 0 8px;
+          font-weight: 600;
+          line-height: 1.4;
+        }
+        :deep(h1) { font-size: 18px; }
+        :deep(h2) { font-size: 16px; }
+        :deep(h3) { font-size: 15px; }
+        :deep(h4) { font-size: 14px; }
+        :deep(p) {
+          margin: 6px 0;
+        }
+        :deep(ul),
+        :deep(ol) {
+          padding-left: 22px;
+          margin: 6px 0;
+        }
+        :deep(li) {
+          margin: 3px 0;
+          line-height: 1.7;
+        }
+        :deep(blockquote) {
+          border-left: 3px solid #d9d9d9;
+          padding-left: 12px;
+          color: #595959;
+          margin: 8px 0;
+        }
+        :deep(table) {
+          border-collapse: collapse;
+          margin: 8px 0;
+          width: 100%;
+        }
+        :deep(th),
+        :deep(td) {
+          border: 1px solid #e8e8e8;
+          padding: 6px 10px;
+          text-align: left;
+          font-size: 13px;
+        }
+        :deep(th) {
+          background: #fafafa;
+          font-weight: 600;
+        }
+        :deep(strong) {
+          font-weight: 600;
+        }
+        :deep(hr) {
+          border: none;
+          border-top: 1px solid #e8e8e8;
+          margin: 12px 0;
+        }
+        :deep(a) {
+          color: #1890ff;
+          text-decoration: none;
+          &:hover {
+            text-decoration: underline;
+          }
         }
       }
     }
