@@ -224,11 +224,9 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
     @RateLimit(key = "practice:chat")
     @Override
     public PracticeChatResponse chatStructured(PracticeChatRequest request) {
-        // 从数据库加载 structured_analysis 模板，渲染变量后作为 system prompt
-        String systemPrompt = iAiPromptTemplateService.renderTemplate(
-                iAiPromptTemplateService.getActiveByCode("structured_analysis").getId(),
-                request.getTemplateVars()  // 结构化模板当前没有额外变量，传 null 也行
-        );
+        // 一步完成：按编码查模板 + 渲染变量（内部走 Caffeine 缓存）
+        String systemPrompt = iAiPromptTemplateService.renderByCode(
+                "structured_analysis", request.getTemplateVars());
 
         PracticeChatRequest structuredRequest = new PracticeChatRequest();
         structuredRequest.setMessage(request.getMessage());
@@ -264,17 +262,13 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
      * - 否则用传入的 systemPrompt 原文
      */
     private String resolveSystemPrompt(PracticeChatRequest request) {
-        // 优先使用 promptCode 从数据库加载
+        // 优先使用 promptCode 从数据库加载（内部走 Caffeine 缓存）
         if (request.getPromptCode() != null && !request.getPromptCode().isBlank()) {
             try {
-                var template = iAiPromptTemplateService.getActiveByCode(request.getPromptCode());
-                if (template != null) {
-                    String rendered = iAiPromptTemplateService.renderTemplate(
-                            template.getId(), request.getTemplateVars());
-                    log.info("使用模板 [{}] v{} | 渲染后长度={}",
-                            template.getPromptCode(), template.getVersion(), rendered.length());
-                    return rendered;
-                }
+                String rendered = iAiPromptTemplateService.renderByCode(
+                        request.getPromptCode(), request.getTemplateVars());
+                log.info("使用模板 [{}] 渲染完成，长度={}", request.getPromptCode(), rendered.length());
+                return rendered;
             } catch (Exception e) {
                 log.warn("加载模板失败 [{}]，降级使用 systemPrompt: {}",
                         request.getPromptCode(), e.getMessage());

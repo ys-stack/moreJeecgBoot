@@ -93,16 +93,49 @@ public class AiPromptTemplateController
     }
 
     /**
-     * 修改
+     * 修改模板（不可变历史模式：不直接改原记录，而是创建新版本）
+     *
+     * 真实项目中 Prompt 模板不应被原地修改——每次修改应该产生新版本，
+     * 这样可以追溯"什么时候改了什么"，也方便回滚。
+     *
+     * 逻辑：查出原记录 → 复制内容 → 用传入的字段覆盖 → version+1 → 插入新记录 → 禁用旧版本
      */
     @PutMapping("/edit")
-    @Operation(summary = "修改模板")
+    @Operation(summary = "修改模板（自动创建新版本）")
     public Result<String> edit(@RequestBody AiPromptTemplate template) {
         if (oConvertUtils.isEmpty(template.getId())) {
             return Result.error("ID 不能为空");
         }
-        promptTemplateService.updateById(template);
-        return Result.OK("修改成功");
+        AiPromptTemplate old = promptTemplateService.getById(template.getId());
+        if (old == null) {
+            return Result.error("模板不存在");
+        }
+
+        // 创建新版本
+        AiPromptTemplate newVersion = new AiPromptTemplate();
+        newVersion.setPromptCode(old.getPromptCode());
+        newVersion.setVersion(old.getVersion() + 1);
+        // 用传入的字段覆盖（没传的保持原值）
+        if (template.getTemplate() != null) newVersion.setTemplate(template.getTemplate());
+        else newVersion.setTemplate(old.getTemplate());
+        if (template.getVariables() != null) newVersion.setVariables(template.getVariables());
+        else newVersion.setVariables(old.getVariables());
+        if (template.getDescription() != null) newVersion.setDescription(template.getDescription());
+        else newVersion.setDescription(old.getDescription());
+        if (template.getChangeLog() != null) newVersion.setChangeLog(template.getChangeLog());
+        newVersion.setStatus(1);  // 新版本默认启用
+        newVersion.setCreateTime(new java.util.Date());
+
+        promptTemplateService.save(newVersion);
+
+        // 禁用旧版本
+        old.setStatus(0);
+        old.setUpdateTime(new java.util.Date());
+        promptTemplateService.updateById(old);
+
+        log.info("[PromptTemplate] 新版本创建: code={}, v{} → v{}, changeLog={}",
+                old.getPromptCode(), old.getVersion(), newVersion.getVersion(), newVersion.getChangeLog());
+        return Result.OK("新版本 v" + newVersion.getVersion() + " 创建成功");
     }
 
     /**
@@ -162,5 +195,32 @@ public class AiPromptTemplateController
         } catch (Exception e) {
             return Result.error(e.getMessage());
         }
+    }
+
+    /**
+     * 按编码渲染模板（一步完成：查模板 + 渲染变量）
+     *
+     * 示例请求：POST /practice/prompt/renderByCode/order_query
+     * Body: {"orderInfo": "订单B100，状态已发货"}
+     */
+    @PostMapping("/renderByCode/{code}")
+    @Operation(summary = "按编码渲染模板")
+    public Result<String> renderByCode(@PathVariable String code, @RequestBody(required = false) Map<String, String> variables) {
+        try {
+            String rendered = promptTemplateService.renderByCode(code, variables);
+            return Result.OK(rendered);
+        } catch (Exception e) {
+            return Result.error(e.getMessage());
+        }
+    }
+
+    /**
+     * 手动清空模板缓存（模板变更后如果缓存没自动失效，可以手动触发）
+     */
+    @PostMapping("/cache/evict")
+    @Operation(summary = "清空模板缓存")
+    public Result<String> evictCache(@RequestParam(required = false) String promptCode) {
+        promptTemplateService.evictCache(promptCode);
+        return Result.OK("缓存已清空");
     }
 }

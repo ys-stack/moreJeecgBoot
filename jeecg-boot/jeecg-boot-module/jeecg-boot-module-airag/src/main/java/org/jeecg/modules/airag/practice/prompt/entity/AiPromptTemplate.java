@@ -51,6 +51,9 @@ public class AiPromptTemplate implements Serializable {
     @Schema(description = "模板用途说明")
     private String description;
 
+    @Schema(description = "变更说明（记录本次修改的原因和内容）")
+    private String changeLog;
+
     @Excel(name = "状态", width = 10, dicCode = "status")
     @Schema(description = "状态：0=禁用 1=启用")
     private Integer status;
