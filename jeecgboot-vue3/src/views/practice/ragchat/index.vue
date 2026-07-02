@@ -85,13 +85,24 @@
             </div>
           </div>
         </div>
-        <!-- 正在思考指示器（等待向量检索和首条流式响应时显示） -->
-        <div v-if="loading && messages.length > 0 && messages[messages.length - 1]?.role === 'user'" class="message-row assistant">
+        <!-- 处理状态指示器（搜索中 / 思考中） -->
+        <div v-if="streamingPhase !== 'idle' && messages.length > 0 && messages[messages.length - 1]?.role === 'user'" class="message-row assistant">
           <div class="assistant-bubble">
             <div class="assistant-avatar"><RobotOutlined /></div>
-            <div class="assistant-content typing">
-              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-              <span class="typing-text">检索知识库中...</span>
+            <div class="assistant-content">
+              <!-- 阶段1: 检索知识库 -->
+              <div :class="['phase-card', streamingPhase === 'searching' ? 'phase-active' : 'phase-done']">
+                <LoadingOutlined v-if="streamingPhase === 'searching'" spin style="color: #1890ff" />
+                <CheckCircleOutlined v-else style="color: #52c41a" />
+                <span class="phase-text">{{ streamingPhase === 'searching' ? '正在检索知识库...' : '知识库检索完成' }}</span>
+              </div>
+              <!-- 阶段2: 思考中（meta 到达后显示，首个 token 到达后变完成） -->
+              <div v-if="streamingPhase === 'thinking' || streamingPhase === 'streaming'"
+                   :class="['phase-card', streamingPhase === 'thinking' ? 'phase-active' : 'phase-done']">
+                <LoadingOutlined v-if="streamingPhase === 'thinking'" spin style="color: #1890ff" />
+                <CheckCircleOutlined v-else style="color: #52c41a" />
+                <span class="phase-text">{{ streamingPhase === 'thinking' ? '正在思考回答...' : '思考完成' }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -125,6 +136,8 @@
     RobotOutlined,
     SendOutlined,
     FileTextOutlined,
+    LoadingOutlined,
+    CheckCircleOutlined,
   } from '@ant-design/icons-vue';
   import { defHttp } from '/@/utils/http/axios';
   import { getToken } from '/@/utils/auth/index';
@@ -135,6 +148,7 @@
   const md = new MarkdownIt({
     html: false,
     linkify: true,
+    breaks: true,
     typographer: true,
     highlight(str: string, lang: string) {
       if (lang && hljs.getLanguage(lang)) {
@@ -158,6 +172,8 @@
 
   const messageAreaRef = ref<HTMLElement>();
   const scrollAnchorRef = ref<HTMLElement>();
+  // 流式处理阶段：idle → searching → thinking → streaming → idle
+  const streamingPhase = ref<'idle' | 'searching' | 'thinking' | 'streaming'>('idle');
 
   // ==================== 初始化 ====================
   onMounted(async () => {
@@ -234,6 +250,7 @@
     messages.value.push({ role: 'user', content: query });
     inputText.value = '';
     loading.value = true;
+    streamingPhase.value = 'searching';
     scrollToBottom();
 
     // AI 消息索引，首条事件到达时才创建
@@ -306,6 +323,7 @@
           switch (eventType) {
             case 'meta':
               ensureAiMessage();
+              streamingPhase.value = 'thinking';
               try {
                 const meta = JSON.parse(eventData);
                 if (meta.sessionId) {
@@ -325,16 +343,21 @@
 
             case 'message':
               ensureAiMessage();
+              if (streamingPhase.value !== 'streaming') {
+                streamingPhase.value = 'streaming';
+              }
               accumulatedContent += eventData;
               messages.value[aiMsgIndex].content = accumulatedContent;
               scrollToBottom();
               break;
 
             case 'done':
+              streamingPhase.value = 'idle';
               loadSessions();
               break;
 
             case 'error':
+              streamingPhase.value = 'idle';
               ensureAiMessage();
               accumulatedContent += `\n\n⚠️ ${eventData}`;
               messages.value[aiMsgIndex].content = accumulatedContent;
@@ -354,6 +377,7 @@
         });
       }
     } catch (e: any) {
+      streamingPhase.value = 'idle';
       const errMsg = e?.message || '请求失败';
       if (aiMsgIndex !== -1) {
         messages.value[aiMsgIndex].content = `抱歉，请求出错：${errMsg}`;
@@ -368,6 +392,7 @@
       }
     } finally {
       loading.value = false;
+      streamingPhase.value = 'idle';
       scrollToBottom();
     }
   }
@@ -709,45 +734,28 @@
     color: #bfbfbf;
   }
 
-  // 正在思考动画
-  .typing {
+  // 处理阶段状态卡片
+  .phase-card {
     display: flex;
-    gap: 4px;
     align-items: center;
-    padding: 14px 18px !important;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    margin-bottom: 4px;
+    transition: all 0.3s ease;
 
-    .dot {
-      width: 8px;
-      height: 8px;
-      background: #bfbfbf;
-      border-radius: 50%;
-      animation: typing 1.4s infinite ease-in-out;
-
-      &:nth-child(2) {
-        animation-delay: 0.2s;
-      }
-      &:nth-child(3) {
-        animation-delay: 0.4s;
-      }
+    &.phase-active {
+      background: #f0f5ff;
+      color: #1890ff;
+    }
+    &.phase-done {
+      background: #f6ffed;
+      color: #52c41a;
     }
 
-    .typing-text {
-      margin-left: 8px;
-      font-size: 13px;
-      color: #8c8c8c;
-    }
-  }
-
-  @keyframes typing {
-    0%,
-    60%,
-    100% {
-      transform: translateY(0);
-      opacity: 0.4;
-    }
-    30% {
-      transform: translateY(-6px);
-      opacity: 1;
+    .phase-text {
+      font-weight: 500;
     }
   }
 

@@ -26,6 +26,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.ObjectUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
@@ -135,6 +136,9 @@ public class RagChatService {
                 .setCreateTime(new Date());
         messageMapper.insert(userMsg);
 
+        // ==================== Step 2.5: 查询改写（多轮对话时，结合历史生成独立检索词） ====================
+        String searchQuery = rewriteQuery(session,request.getQuery());
+
         // ==================== Step 3: 向量检索（RAG 核心 + 权限过滤） ====================
         // 获取当前用户可访问的知识库ID列表
         List<String> accessibleKbIds = getAccessibleKnowledgeBaseIds(userId);
@@ -144,11 +148,10 @@ public class RagChatService {
             if (!accessibleKbIds.contains(request.getKnowledgeBaseId())) {
                 throw new RuntimeException("无权访问该知识库: " + request.getKnowledgeBaseId());
             }
-            searchResults = vectorStoreService.search(request.getQuery(), topK, request.getKnowledgeBaseId());
+            searchResults = vectorStoreService.search(searchQuery, topK, request.getKnowledgeBaseId());
         } else {
             // 未指定知识库 → 在所有可访问的知识库中检索
-            searchResults = vectorStoreService.searchByKnowledgeBaseIds(
-                    request.getQuery(), topK, accessibleKbIds);
+            searchResults = vectorStoreService.searchByKnowledgeBaseIds(searchQuery, topK, accessibleKbIds);
         }
         // 过滤低相关度结果（Rerank 分数通常 0~1，阈值设 0.2~0.3 比较合理）
         double minScore = 0.2;
@@ -159,11 +162,11 @@ public class RagChatService {
                 request.getQuery(), accessibleKbIds.size(), searchResults.size(), filteredResults.size());
 
         // ==================== Step 4: 构建 LangChain4j 消息列表 ====================
-        List<ChatMessage> messages = buildRagMessages(filteredResults, sessionId, request.getQuery());
+        List<ChatMessage> messages = buildRagMessages(searchResults, sessionId, request.getQuery());
 
         // ==================== Step 5: 调用大模型 ====================
         long startTime = System.currentTimeMillis();
-        String ragContextJson = JSON.toJSONString(filteredResults);
+        String ragContextJson = JSON.toJSONString(searchResults);
 
         try {
             ChatResponse chatResponse = chatModel.chat(messages);
@@ -242,6 +245,51 @@ public class RagChatService {
         }
     }
 
+    /*
+     * @Author: ys
+     * @Date: 2026/7/2 11:21
+     * @DESC: 多轮对话时，结合历史生成独立检索词
+     */
+    private String rewriteQuery(AiChatSession session, String query) {
+        List<AiChatMessage> aiChatMessages = messageMapper.loadRecentMessages(session.getId(), 6);
+        if (ObjectUtils.isEmpty(aiChatMessages)) {
+            return query;
+        }
+        // 构建改写 Prompt
+        StringBuilder historyText = new StringBuilder();
+        for (AiChatMessage msg : aiChatMessages) {
+            String role = "user".equals(msg.getRole()) ? "用户" : "助手";
+            historyText.append(role).append(": ").append(msg.getContent()).append("\n");
+        }
+
+        String prompt = String.format("""
+            你是一个搜索查询改写助手。根据对话历史，将用户的最新问题改写为一个独立的、适合在知识库中检索的查询。
+            
+            要求：
+            1. 解析指代词（它、这个、那个、刚才提到的等），替换为具体实体
+            2. 补充隐含上下文，使查询自包含
+            3. 保持简洁，不要超过50个字
+            4. 如果问题本身已经足够明确，不需要改写，直接返回原问题
+            
+            对话历史：
+            %s
+            
+            用户最新问题：%s
+            
+            请直接输出改写后的查询，不要加任何前缀或解释。
+            """, historyText, query);
+
+        try{
+            String rewritten = chatModel.chat(prompt);
+            if (rewritten != null && !rewritten.isBlank()) {
+                return rewritten.trim();
+            }
+        }catch (Exception e){
+            log.warn("查询改写失败，使用原始查询: {}", e.getMessage());
+        }
+        return query;
+    }
+
     // ==================== 流式 RAG 聊天（SSE） ====================
 
     /**
@@ -286,6 +334,9 @@ public class RagChatService {
                 .setCreateTime(new Date());
         messageMapper.insert(userMsg);
 
+        // ==================== Step 2.5: 查询改写（多轮对话时，结合历史生成独立检索词） ====================
+        String searchQuery = rewriteQuery(session,request.getQuery());
+
         // Step 3: 向量检索（权限过滤）
         List<String> accessibleKbIds = getAccessibleKnowledgeBaseIds(userId);
         List<VectorSearchResultVO> searchResults;
@@ -297,9 +348,9 @@ public class RagChatService {
                 } catch (Exception ignored) {}
                 return emitter;
             }
-            searchResults = vectorStoreService.search(request.getQuery(), topK, request.getKnowledgeBaseId());
+            searchResults = vectorStoreService.search(searchQuery, topK, request.getKnowledgeBaseId());
         } else {
-            searchResults = vectorStoreService.searchByKnowledgeBaseIds(request.getQuery(), topK, accessibleKbIds);
+            searchResults = vectorStoreService.searchByKnowledgeBaseIds(searchQuery, topK, accessibleKbIds);
         }
         log.info("[{}] RAG 流式检索完成: 可访问KB={}, 命中chunk={}", requestId, accessibleKbIds.size(), searchResults.size());
 

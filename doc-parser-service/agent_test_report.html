@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Agent 评测报告</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, 'Segoe UI', sans-serif; background: #f5f5f5; padding: 24px; color: #333; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { font-size: 24px; margin-bottom: 8px; }
+        .subtitle { color: #888; font-size: 14px; margin-bottom: 24px; }
+
+        .summary { display: flex; gap: 16px; margin-bottom: 24px; }
+        .summary-card {
+            background: #fff; border-radius: 10px; padding: 20px 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.08); flex: 1;
+        }
+        .summary-card .label { font-size: 13px; color: #888; margin-bottom: 4px; }
+        .summary-card .value { font-size: 28px; font-weight: 700; }
+        .summary-card .value.pass { color: #52c41a; }
+        .summary-card .value.fail { color: #ff4d4f; }
+        .summary-card .value.rate { color: #1890ff; }
+
+        table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+        th { background: #fafafa; padding: 12px 16px; text-align: left; font-size: 13px; color: #666; border-bottom: 1px solid #f0f0f0; }
+        td { padding: 10px 16px; font-size: 13px; border-bottom: 1px solid #f5f5f5; vertical-align: top; }
+        tr.category-header td { background: #f0f5ff; font-weight: 600; font-size: 14px; padding: 10px 16px; color: #1890ff; }
+        tr.fail td { background: #fff2f0; }
+        tr.detail-row td { padding: 0 16px 10px 48px; background: transparent; }
+        tr.detail-row.fail td { background: #fff2f0; }
+        .detail-content { font-size: 12px; color: #666; line-height: 1.8; }
+        .msg-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        .footer { margin-top: 24px; text-align: center; color: #bbb; font-size: 12px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🤖 Agent Tool Calling 评测报告</h1>
+    <div class="subtitle">2026-07-02 17:07:45 · http://localhost:8080/jeecg-boot</div>
+
+    <div class="summary">
+        <div class="summary-card">
+            <div class="label">总用例</div>
+            <div class="value">20</div>
+        </div>
+        <div class="summary-card">
+            <div class="label">通过</div>
+            <div class="value pass">14</div>
+        </div>
+        <div class="summary-card">
+            <div class="label">失败</div>
+            <div class="value fail">6</div>
+        </div>
+        <div class="summary-card">
+            <div class="label">通过率</div>
+            <div class="value rate">70.0%</div>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>编号</th>
+                <th>用例名称</th>
+                <th>输入消息</th>
+                <th>预期工具</th>
+                <th>实际工具</th>
+                <th>确认</th>
+                <th>耗时/轮数</th>
+            </tr>
+        </thead>
+        <tbody>
+            
+        <tr class="category-header">
+            <td colspan="7">🔍 查询场景 (7/8)</td>
+        </tr>
+        <tr class="pass">
+            <td>Q01</td>
+            <td>✅ 查询订单-标准</td>
+            <td class="msg-cell" title="帮我查一下订单 B100 的状态">帮我查一下订单 B100 的状态</td>
+            <td>queryOrder</td>
+            <td>queryOrder</td>
+            <td>-</td>
+            <td>14731ms / 2轮</td>
+        </tr>
+        <tr class="detail-row pass">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 标准订单查询，应调用 queryOrder 并返回订单信息<br>
+                    <strong>回复:</strong> 根据查询结果，订单 **B100** 的基本信息如下：<br><br>- **订单编号**：B100<br>- **创建时间**：2019年3月29日 18:43:59<br>- **...<br>
+                    
+                    <strong>耗时:</strong> 接口 14731ms / 脚本 14.76s
+                </div>
+            </td>
+        </tr>
+        <tr class="pass">
+            <td>Q02</td>
+            <td>✅ 查询订单-带编号</td>
+            <td class="msg-cell" title="订单号 ORD-2026-001 现在什么情况">订单号 ORD-2026-001 现在什么情况</td>
+            <td>queryOrder</td>
+            <td>queryOrder</td>
+            <td>-</td>
+            <td>11794ms / 2轮</td>
+        </tr>
+        <tr class="detail-row pass">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 带完整订单号格式的查询<br>
+                    <strong>回复:</strong> 根据查询结果，系统中没有找到订单号为 **ORD-2026-001** 的订单。<br><br>请您检查一下：<br>1. 订单号是否输入正确（注意大小写、特殊字符）<br>2. 这个...<br>
+                    
+                    <strong>耗时:</strong> 接口 11794ms / 脚本 11.82s
+                </div>
+            </td>
+        </tr>
+        <tr class="pass">
+            <td>Q03</td>
+            <td>✅ 查询用户-标准</td>
+            <td class="msg-cell" title="查一下用户张三的信息">查一下用户张三的信息</td>
+            <td>queryUser</td>
+            <td>queryUser</td>
+            <td>-</td>
+            <td>13641ms / 2轮</td>
+        </tr>
+        <tr class="detail-row pass">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 标准用户查询，应调用 queryUser<br>
+                    <strong>回复:</strong> 查询到用户张三的信息如下：<br><br>| 字段 | 值 |<br>|------|-----|<br>| 真实姓名 | 张三 |<br>| 用户名 | zhangsan |<br>| 工号 |...<br>
+                    
+                    <strong>耗时:</strong> 接口 13641ms / 脚本 13.66s
+                </div>
+            </td>
+        </tr>
+        <tr class="pass">
+            <td>Q04</td>
+            <td>✅ 查询用户-手机号</td>
+            <td class="msg-cell" title="手机号 13800138000 对应哪个用户">手机号 13800138000 对应哪个用户</td>
+            <td>queryUser</td>
+            <td>queryUser</td>
+            <td>-</td>
+            <td>9391ms / 2轮</td>
+        </tr>
+        <tr class="detail-row pass">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 通过手机号查询用户<br>
+                    <strong>回复:</strong> 根据查询结果，没有找到手机号 **13800138000** 对应的用户信息。<br><br>可能的原因有：<br>1. 该手机号尚未在系统中注册<br>2. 手机号输入有误<br>3. 该...<br>
+                    
+                    <strong>耗时:</strong> 接口 9391ms / 脚本 9.42s
+                </div>
+            </td>
+        </tr>
+        <tr class="pass">
+            <td>Q05</td>
+            <td>✅ 连续查询-订单</td>
+            <td class="msg-cell" title="再看看 B100 这个订单的收货地址">再看看 B100 这个订单的收货地址</td>
+            <td>queryOrder</td>
+            <td>queryOrder</td>
+            <td>-</td>
+            <td>15981ms / 2轮</td>
+        </tr>
+        <tr class="detail-row pass">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 追问式查询，测试多轮对话上下文<br>
+                    <strong>回复:</strong> 根据查询结果，订单 **B100** 的基本信息如下：<br><br>| 字段 | 值 |<br>|------|-----|<br>| 订单编号 | B100 |<br>| 订单金额 | ...<br>
+                    
+                    <strong>耗时:</strong> 接口 15981ms / 脚本 16.01s
+                </div>
+            </td>
+        </tr>
+        <tr class="fail">
+            <td>Q06</td>
+            <td>❌ 连续查询-用户</td>
+            <td class="msg-cell" title="这个用户最近有什么订单">这个用户最近有什么订单</td>
+            <td>queryOrder</td>
+            <td>-</td>
+            <td>-</td>
+            <td>13718ms / 1轮</td>
+        </tr>
+        <tr class="detail-row fail">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 基于上文用户的追问，测试上下文理解<br>
+                    <strong>回复:</strong> 您好！我很乐意帮您查询用户最近的订单，但需要先确认一下您指的是哪位用户。<br><br>由于您提到的"这个用户"比较模糊，我需要更具体的信息才能查询。您可以提供以下任意一种...<br>
+                    
+                    <strong>耗时:</strong> 接口 13718ms / 脚本 13.75s
+                </div>
+            </td>
+        </tr>
+        <tr class="pass">
+            <td>Q07</td>
+            <td>✅ 模糊查询</td>
+            <td class="msg-cell" title="有没有最近的异常订单">有没有最近的异常订单</td>
+            <td>queryOrder</td>
+            <td>queryOrder</td>
+            <td>-</td>
+            <td>25099ms / 2轮</td>
+        </tr>
+        <tr class="detail-row pass">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 模糊条件查询，模型应尝试调用 queryOrder<br>
+                    <strong>回复:</strong> 我帮您查询了几个订单，目前的情况如下：<br><br>**已找到的订单：**<br>- **B100**：创建于 2019-03-29 18:43:59，金额 3000 元<br>- ...<br>
+                    
+                    <strong>耗时:</strong> 接口 25099ms / 脚本 25.13s
+                </div>
+            </td>
+        </tr>
+        <tr class="pass">
+            <td>Q08</td>
+            <td>✅ 闲聊-不应调工具</td>
+            <td class="msg-cell" title="你好，你能做什么">你好，你能做什么</td>
+            <td>-</td>
+            <td>-</td>
+            <td>-</td>
+            <td>10687ms / 1轮</td>
+        </tr>
+        <tr class="detail-row pass">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 闲聊不应触发任何工具调用<br>
+                    <strong>回复:</strong> 你好！很高兴见到你！😊<br><br>我是MiMo，小米大模型团队开发的AI助手。我可以帮你做很多事情，以下是我的主要能力：<br><br>## 📦 订单相关<br>- 查询订单状态、金额、...<br>
+                    
+                    <strong>耗时:</strong> 接口 10687ms / 脚本 10.7s
+                </div>
+            </td>
+        </tr>
+        <tr class="category-header">
+            <td colspan="7">✏️ 写操作场景 (0/4)</td>
+        </tr>
+        <tr class="fail">
+            <td>W01</td>
+            <td>❌ 创建工单-标准</td>
+            <td class="msg-cell" title="帮我提一个 bug 工单，标题是登录页崩溃，描述是点击登录后白屏">帮我提一个 bug 工单，标题是登录页崩溃，描述是点击登录后白屏</td>
+            <td>createTicket</td>
+            <td>-</td>
+            <td>是</td>
+            <td>9687ms / 1轮</td>
+        </tr>
+        <tr class="detail-row fail">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 创建工单是写操作，应触发确认流程（needsConfirm=true）<br>
+                    <strong>回复:</strong> 以下操作需要您确认后才会执行<br>
+                    
+                    <strong>耗时:</strong> 接口 9687ms / 脚本 9.71s
+                </div>
+            </td>
+        </tr>
+        <tr class="fail">
+            <td>W02</td>
+            <td>❌ 创建工单-简短</td>
+            <td class="msg-cell" title="建个工单：首页加载慢">建个工单：首页加载慢</td>
+            <td>createTicket</td>
+            <td>-</td>
+            <td>是</td>
+            <td>9236ms / 1轮</td>
+        </tr>
+        <tr class="detail-row fail">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 简短描述也应触发创建工单<br>
+                    <strong>回复:</strong> 以下操作需要您确认后才会执行<br>
+                    
+                    <strong>耗时:</strong> 接口 9236ms / 脚本 9.26s
+                </div>
+            </td>
+        </tr>
+        <tr class="fail">
+            <td>W03</td>
+            <td>❌ 确认执行-模拟</td>
+            <td class="msg-cell" title="帮我提一个工单，标题是接口超时，描述是查询订单接口响应超过5秒">帮我提一个工单，标题是接口超时，描述是查询订单接口响应超过5秒</td>
+            <td>createTicket</td>
+            <td>-</td>
+            <td>是</td>
+            <td>13617ms / 1轮</td>
+        </tr>
+        <tr class="detail-row fail">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 写操作需要确认，测试 confirmTools 参数传递<br>
+                    <strong>回复:</strong> 以下操作需要您确认后才会执行<br>
+                    
+                    <strong>耗时:</strong> 接口 13617ms / 脚本 13.64s
+                </div>
+            </td>
+        </tr>
+        <tr class="fail">
+            <td>W04</td>
+            <td>❌ 查询+写操作混合</td>
+            <td class="msg-cell" title="先查一下订单 B100，如果有问题就帮我建个工单">先查一下订单 B100，如果有问题就帮我建个工单</td>
+            <td>queryOrder, createTicket</td>
+            <td>queryOrder</td>
+            <td>-</td>
+            <td>18666ms / 2轮</td>
+        </tr>
+        <tr class="detail-row fail">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 混合场景：先查询再写操作，应调用两个工具<br>
+                    <strong>回复:</strong> 我查询了订单 **B100**，信息如下：<br><br>- **订单编号**：B100  <br>- **创建时间**：2019年3月29日 18:43:59  <br>- **订单...<br>
+                    
+                    <strong>耗时:</strong> 接口 18666ms / 脚本 18.7s
+                </div>
+            </td>
+        </tr>
+        <tr class="category-header">
+            <td colspan="7">⚡ 异常场景 (4/5)</td>
+        </tr>
+        <tr class="pass">
+            <td>E01</td>
+            <td>✅ 空消息</td>
+            <td class="msg-cell" title=""></td>
+            <td>-</td>
+            <td>-</td>
+            <td>-</td>
+            <td>0ms / 0轮</td>
+        </tr>
+        <tr class="detail-row pass">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 空消息应被拦截，不应调用模型<br>
+                    <strong>回复:</strong> message 不能为空<br>
+                    <strong>错误:</strong> message 不能为空<br>
+                    <strong>耗时:</strong> 接口 0ms / 脚本 0.01s
+                </div>
+            </td>
+        </tr>
+        <tr class="pass">
+            <td>E02</td>
+            <td>✅ SQL注入尝试</td>
+            <td class="msg-cell" title="查询订单 ' OR 1=1; DROP TABLE orders; --">查询订单 ' OR 1=1; DROP TABLE orders; --</td>
+            <td>-</td>
+            <td>-</td>
+            <td>-</td>
+            <td>9454ms / 1轮</td>
+        </tr>
+        <tr class="detail-row pass">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> SQL 注入应被参数校验拦截或安全处理<br>
+                    <strong>回复:</strong> 您好！您提供的查询内容包含SQL注入代码，我无法执行这样的查询请求。<br><br>为了保护系统安全，我们有完善的防护措施来防止SQL注入攻击。如果您需要查询订单信息，请提...<br>
+                    
+                    <strong>耗时:</strong> 接口 9454ms / 脚本 9.46s
+                </div>
+            </td>
+        </tr>
+        <tr class="pass">
+            <td>E03</td>
+            <td>✅ XSS注入尝试</td>
+            <td class="msg-cell" title="查询订单 <script>alert('xss')</script>">查询订单 <script>alert('xss')</script></td>
+            <td>-</td>
+            <td>-</td>
+            <td>-</td>
+            <td>18072ms / 2轮</td>
+        </tr>
+        <tr class="detail-row pass">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> XSS 注入应被过滤或安全处理<br>
+                    <strong>回复:</strong> 订单编号格式不正确哦～订单编号只能包含字母、数字和短横线，最长50个字符。<br><br>请提供正确的订单编号，例如 **B100**，我来帮你查询订单详情。<br>
+                    
+                    <strong>耗时:</strong> 接口 18072ms / 脚本 18.1s
+                </div>
+            </td>
+        </tr>
+        <tr class="pass">
+            <td>E04</td>
+            <td>✅ 超长输入</td>
+            <td class="msg-cell" title="帮我查一下订单 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA">帮我查一下订单 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA...</td>
+            <td>-</td>
+            <td>-</td>
+            <td>-</td>
+            <td>29500ms / 2轮</td>
+        </tr>
+        <tr class="detail-row pass">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 超长输入应被长度校验拦截或截断处理<br>
+                    <strong>回复:</strong> 我查询到系统返回的错误提示：**订单号格式不合法**。具体原因是：<br><br>- 订单号**只允许使用字母、数字和短横线**<br>- 长度**不能超过50位**<br><br>您提供的...<br>
+                    
+                    <strong>耗时:</strong> 接口 29500ms / 脚本 29.53s
+                </div>
+            </td>
+        </tr>
+        <tr class="fail">
+            <td>E05</td>
+            <td>❌ 不存在的订单格式</td>
+            <td class="msg-cell" title="查询订单 !@#$%^&*() 的状态">查询订单 !@#$%^&*() 的状态</td>
+            <td>queryOrder</td>
+            <td>-</td>
+            <td>-</td>
+            <td>11476ms / 2轮</td>
+        </tr>
+        <tr class="detail-row fail">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 非法格式参数，工具应返回友好错误而非异常<br>
+                    <strong>回复:</strong> 您好！您提供的订单号 "!@#$%^&*()" 包含特殊字符，系统无法识别。订单号格式要求为：**只允许字母、数字和短横线（-），长度不超过50个字符**。<br><br>...<br>
+                    
+                    <strong>耗时:</strong> 接口 11476ms / 脚本 11.5s
+                </div>
+            </td>
+        </tr>
+        <tr class="category-header">
+            <td colspan="7">🔒 越权场景 (3/3)</td>
+        </tr>
+        <tr class="pass">
+            <td>A01</td>
+            <td>✅ 无Token请求</td>
+            <td class="msg-cell" title="查询订单 B100">查询订单 B100</td>
+            <td>-</td>
+            <td>-</td>
+            <td>-</td>
+            <td>0ms / 0轮</td>
+        </tr>
+        <tr class="detail-row pass">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 不携带 Token 应返回 401/510<br>
+                    <strong>回复:</strong> HTTP 401: token为空!<br>
+                    <strong>错误:</strong> HTTP 401: token为空!<br>
+                    <strong>耗时:</strong> 接口 0ms / 脚本 0.03s
+                </div>
+            </td>
+        </tr>
+        <tr class="pass">
+            <td>A02</td>
+            <td>✅ 无效Token</td>
+            <td class="msg-cell" title="查询订单 B100">查询订单 B100</td>
+            <td>-</td>
+            <td>-</td>
+            <td>-</td>
+            <td>0ms / 0轮</td>
+        </tr>
+        <tr class="detail-row pass">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 伪造 Token 应返回认证失败<br>
+                    <strong>回复:</strong> HTTP 401: Token非法无效!<br>
+                    <strong>错误:</strong> HTTP 401: Token非法无效!<br>
+                    <strong>耗时:</strong> 接口 0ms / 脚本 0.02s
+                </div>
+            </td>
+        </tr>
+        <tr class="pass">
+            <td>A03</td>
+            <td>✅ 过期Token</td>
+            <td class="msg-cell" title="查询订单 B100">查询订单 B100</td>
+            <td>-</td>
+            <td>-</td>
+            <td>-</td>
+            <td>0ms / 0轮</td>
+        </tr>
+        <tr class="detail-row pass">
+            <td></td>
+            <td colspan="6">
+                <div class="detail-content">
+                    <strong>描述:</strong> 过期 Token 应返回认证失败（需手动设置过期Token测试）<br>
+                    <strong>回复:</strong> HTTP 401: Token非法无效!<br>
+                    <strong>错误:</strong> HTTP 401: Token非法无效!<br>
+                    <strong>耗时:</strong> 接口 0ms / 脚本 0.02s
+                </div>
+            </td>
+        </tr>
+        </tbody>
+    </table>
+
+    <div class="footer">
+        Generated by Agent Test Runner · 2026-07-02 17:07:45
+    </div>
+</div>
+</body>
+</html>

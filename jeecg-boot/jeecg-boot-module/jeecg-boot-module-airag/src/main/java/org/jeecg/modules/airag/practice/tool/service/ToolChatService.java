@@ -680,6 +680,11 @@ public class ToolChatService {
         return session;
     }
 
+    /*
+     * @Author: ys
+     * @Date: 2026/7/2 11:07
+     * @DESC: 服务降级
+     */
     private ToolChatResponse fallbackChat(String userMessage, long startTime) {
         try {
             ChatResponse response = chatModel.chat(new UserMessage(userMessage));
