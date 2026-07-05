@@ -401,3 +401,28 @@ justauth:
     type: default
     prefix: 'demo::'
     timeout: 1h
+
+# AI 练习模块配置
+# 生产环境不要在 yml 中写明文密钥，通过环境变量、启动参数、Docker/K8s Secret 或配置中心注入。
+practice:
+  ai:
+    base-url: ${PRACTICE_AI_BASE_URL:}
+    api-key: ${PRACTICE_AI_API_KEY:}
+    model-name: ${PRACTICE_AI_MODEL_NAME:}
+    temperature: ${PRACTICE_AI_TEMPERATURE:}
+    max-tokens: ${PRACTICE_AI_MAX_TOKENS:}
+    timeout-seconds: ${PRACTICE_AI_TIMEOUT_SECONDS:}
+  embed:
+    api-key: ${PRACTICE_EMBED_API_KEY:}
+    base-url: ${PRACTICE_EMBED_BASE_URL:}
+    model-name: ${PRACTICE_EMBED_MODEL_NAME:}
+    dimensions: ${PRACTICE_EMBED_DIMENSIONS:}
+    timeout-seconds: ${PRACTICE_EMBED_TIMEOUT_SECONDS:}
+  es:
+    cluster-nodes: ${PRACTICE_ES_CLUSTER_NODES:}
+    username: ${PRACTICE_ES_USERNAME:}
+    password: ${PRACTICE_ES_PASSWORD:}
+    index-name: ${PRACTICE_ES_INDEX_NAME:}
+  parser:
+    url: ${PRACTICE_PARSER_URL:}
+    timeout-seconds: ${PRACTICE_PARSER_TIMEOUT_SECONDS:}

@@ -58,7 +58,7 @@ public class PracticeVectorConfig {
     @Data
     public static class EsProperties {
         /** 集群地址 */
-        private String clusterNodes = "192.168.234.128:9200";
+        private String clusterNodes;
         /** 索引名称 */
         private String indexName = "practice_knowledge_chunks";
         /** ES 用户名（开启安全认证时使用） */
@@ -77,7 +77,7 @@ public class PracticeVectorConfig {
     @Data
     public static class ParserProperties {
         /** 服务地址 */
-        private String url = "http://localhost:8000";
+        private String url;
         /** 读取超时秒数 */
         private int timeoutSeconds = 120;
     }

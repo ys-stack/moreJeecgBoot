@@ -1498,6 +1498,20 @@ DispatcherServlet
 
 所以这张图最该记住的一句话是：**Mapper 方法调用只是入口，底层会经过代理定位 SQL，再由 `SqlSession`、`Executor` 和各类 Handler 配合完成参数绑定、SQL 执行和结果映射。**
 
+把它和你每天写的代码对应起来，就是下面这条线：
+
+```java
+User user = userMapper.selectById(1L);
+```
+
+```xml
+<select id="selectById" resultType="User">
+    select id, username from sys_user where id = #{id}
+</select>
+```
+
+`selectById` 这个方法名会定位到 `MappedStatement`，`#{id}` 会交给 `ParameterHandler` 做预编译参数绑定，查询结果里的 `id`、`username` 会交给 `ResultSetHandler` 映射回 `User` 对象。你平时看到的“调用 Mapper 得到对象”，中间其实已经走完了一套 SQL 元数据定位、参数处理、JDBC 执行、结果映射流程。
+
 ![MyBatis 插件机制](images/ssm-11-mybatis-plugin.svg)
 
 这张图讲的是：MyBatis 插件不是在任意地方“插一脚”，它只能围绕四类核心对象做拦截：`Executor`、`StatementHandler`、`ParameterHandler`、`ResultSetHandler`。
@@ -1507,6 +1521,18 @@ DispatcherServlet
 你日常接触最多的是分页插件和多租户插件。分页插件常拦截 `Executor` 或 `StatementHandler`，在 SQL 发给数据库前追加 `limit`，必要时再生成一条 `count` SQL；多租户、数据权限插件则可能在 SQL 上追加 `tenant_id` 或权限条件。慢 SQL 统计、审计字段处理也可以基于类似机制做。
 
 这里有个容易忽略的点：插件是有顺序的。多个插件都改 SQL 时，谁先包裹、谁先执行，会影响最终 SQL 的样子。面试或排查问题时，不要只说“用了插件”，还要能说清楚“拦截了哪个对象、在 SQL 执行前还是执行后做了什么”。
+
+常见场景可以这样对应：
+
+| 场景 | 常见拦截点 | 做了什么 |
+| --- | --- | --- |
+| 分页 | `Executor` / `StatementHandler` | 改写 SQL，追加分页条件，可能额外执行 `count` |
+| 多租户 | `StatementHandler` | 给 SQL 自动追加 `tenant_id` 条件 |
+| 数据权限 | `StatementHandler` | 按当前用户、角色、部门追加过滤条件 |
+| 慢 SQL 统计 | `Executor` | 记录执行前后时间、SQL、参数 |
+| 结果脱敏 | `ResultSetHandler` | 在结果映射后对字段做处理 |
+
+所以 MyBatis-Plus 的分页、租户、数据权限能力，本质上不是绕开 MyBatis 另起炉灶，而是站在 MyBatis 插件机制上，对 SQL 执行链路做增强。
 
 ![MyBatis 一级二级缓存](images/ssm-12-mybatis-cache.svg)
 
@@ -1519,6 +1545,14 @@ DispatcherServlet
 二级缓存是 namespace 级别，多个 `SqlSession` 可以共享，但默认需要显式配置。它的问题是业务一致性更难控制：一个 Mapper 的缓存不一定知道另一个 Mapper 或另一张表发生了更新，分布式部署下也更复杂。所以实际项目里，一级缓存自然使用，二级缓存通常很谨慎；更常见的做法是把业务缓存交给 Redis、Caffeine 这类外部缓存，并明确设计 key、过期时间和失效策略。
 
 所以这张图最该记住的是：**一级缓存是会话内的小缓存，默认存在；二级缓存是 namespace 级别的共享缓存，理论上能减少查询，工程上却容易带来脏数据风险。**
+
+如果排查“为什么同一段代码查出来的数据不是我预期的”，可以从三个问题入手：
+
+1. 是不是同一个 `SqlSession` 里重复查询，命中了一级缓存？
+2. 中间有没有执行写操作，导致缓存被清空？
+3. 有没有开启二级缓存，多个 Mapper 或多表更新是否会让缓存失效不及时？
+
+如果业务特别在意每次查询都打到数据库，可以了解 `localCacheScope=STATEMENT`，它会把一级缓存范围缩小到单次语句执行。但大多数项目不需要一上来就改这个配置，先理解默认行为，比盲目关缓存更重要。
 
 ### 9.1 Mapper 为什么能直接调用
 

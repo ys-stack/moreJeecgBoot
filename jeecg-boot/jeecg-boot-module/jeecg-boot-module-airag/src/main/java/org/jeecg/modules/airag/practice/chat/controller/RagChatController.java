@@ -125,7 +125,8 @@ public class RagChatController {
     @GetMapping("/messages/{sessionId}")
     @Operation(summary = "查询会话消息历史")
     public Result<List<AiChatMessage>> listMessages(@PathVariable String sessionId) {
-        List<AiChatMessage> messages = ragChatService.listMessages(sessionId);
+        String userId = getLoginUserId();
+        List<AiChatMessage> messages = ragChatService.listMessages(sessionId,userId);
         return Result.OK(messages);
     }
 

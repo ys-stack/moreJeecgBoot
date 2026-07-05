@@ -26,12 +26,12 @@ public class PracticeAiConfig {
     /**
      * 模型 API 地址
      */
-    private String baseUrl = "https://api.xiaomimimo.com/v1";
+    private String baseUrl;
 
     /**
      * API Key（去模型平台注册获取）
      */
-    private String apiKey = "sk-cfyt1k9ifm9y7hvua7v47044ehv42gd1hxtjyuikl3o0pzlx";
+    private String apiKey;
 
     /**
      * 模型名称
@@ -58,6 +58,7 @@ public class PracticeAiConfig {
      */
     @Bean("practiceChatModel")
     public OpenAiChatModel chatModel() {
+        validateApiKey();;
         return OpenAiChatModel.builder()
                 .baseUrl(baseUrl)
                 .apiKey(apiKey)
@@ -73,6 +74,7 @@ public class PracticeAiConfig {
      */
     @Bean("practiceStreamingChatModel")
     public OpenAiStreamingChatModel streamingChatModel() {
+        validateApiKey();;
         return OpenAiStreamingChatModel.builder()
                 .baseUrl(baseUrl)
                 .apiKey(apiKey)
@@ -81,5 +83,16 @@ public class PracticeAiConfig {
                 .maxTokens(maxTokens)
                 .timeout(java.time.Duration.ofSeconds(timeoutSeconds))
                 .build();
+    }
+
+    /*
+     * @Author: ys
+     * @Date: 2026/7/5 星期日 20:10
+     * @Desc: 校验
+     */
+    private void validateApiKey() {
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalStateException("practice.ai.api-key 未配置");
+        }
     }
 }

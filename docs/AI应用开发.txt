@@ -11,5 +11,5 @@
              提问大模型根据反馈收尾，记录日志，异步更新session摘要等
 
         细节：
-            1：用JPA 完成建索引、批量写入向量、KNN检索、Rerank精排，不依赖es_java客户端
+            1：用JPA template 完成建索引、批量写入向量、KNN检索、Rerank精排，不依赖es_java客户端
             2：

@@ -23,6 +23,8 @@ spring:
 #  main:
 #    # 启动加速 (建议开发环境，开启后flyway自动升级失效)
 #    lazy-initialization: true
+  config:
+    import: optional:file:${user.home}/.jeecg/application-local.yml
   flyway:
     # 是否启用flyway
     enabled: false
@@ -413,28 +415,27 @@ justauth:
 # =============================================
 # AI 练习模块配置（你自己写的 practice 包用这个配置）
 # 注册 DeepSeek: https://platform.deepseek.com  充值10元够用一个月
-# 注册后把 API Key 填到下面的 api-key 里
+# API Key、ES 密码等敏感信息不要写死到 yml，使用环境变量或启动参数注入。
 # =============================================
 practice:
   ai:
-    base-url: https://api.xiaomimimo.com/v1
-    api-key: sk-c08vrckex1e2yiill19pkezgdccm25n4n4oaf50ip3udsxs2
-    model-name: mimo-v2.5-pro
-    temperature: 0.7
-    max-tokens: 2048
-    timeout-seconds: 60
+    base-url: ${PRACTICE_AI_BASE_URL:}
+    api-key: ${PRACTICE_AI_API_KEY:}
+    model-name: ${PRACTICE_AI_MODEL_NAME:}
+    temperature: ${PRACTICE_AI_TEMPERATURE:}
+    max-tokens: ${PRACTICE_AI_MAX_TOKENS:}
+    timeout-seconds: ${PRACTICE_AI_TIMEOUT_SECONDS:}
   embed:
-    api-key: sk-vtdmalkhusnptcjkqckhcjyotmugkxywjhjlqewhziddpwip
-    base-url: https://api.siliconflow.cn/v1
-    model-name: BAAI/bge-m3
-    dimensions: 1024
-    timeout-seconds: 30
+    api-key: ${PRACTICE_EMBED_API_KEY:}
+    base-url: ${PRACTICE_EMBED_BASE_URL:}
+    model-name: ${PRACTICE_EMBED_MODEL_NAME:}
+    dimensions: ${PRACTICE_EMBED_DIMENSIONS:}
+    timeout-seconds: ${PRACTICE_EMBED_TIMEOUT_SECONDS:}
   es:
-    cluster-nodes: 192.168.234.128:9200
-#    cluster-nodes: 192.168.163.128:9200
-    username: elastic
-    password: ${PRACTICE_ES_PASSWORD:elastic123}
-    index-name: practice_knowledge_chunks
+    cluster-nodes: ${PRACTICE_ES_CLUSTER_NODES:}
+    username: ${PRACTICE_ES_USERNAME:}
+    password: ${PRACTICE_ES_PASSWORD:}
+    index-name: ${PRACTICE_ES_INDEX_NAME:}
   parser:
-    url: http://localhost:8000
-    timeout-seconds: 120
+    url: ${PRACTICE_PARSER_URL:}
+    timeout-seconds: ${PRACTICE_PARSER_TIMEOUT_SECONDS:}

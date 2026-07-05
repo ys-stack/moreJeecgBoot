@@ -1,6 +1,7 @@
 package org.jeecg.modules.airag.practice.tool.service;
 
 import com.alibaba.fastjson.JSON;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.*;
 import dev.langchain4j.model.chat.request.ChatRequest;
@@ -76,6 +77,19 @@ public class ToolChatService {
         this.streamingChatModel = streamingChatModel;
     }
 
+    private AiChatSession getOwnedSession(String sessionId, String userId) {
+        AiChatSession session = aiChatSessionMapper.selectOne(
+                new LambdaQueryWrapper<AiChatSession>()
+                        .eq(AiChatSession::getId, sessionId)
+                        .eq(AiChatSession::getUserId, userId)
+                        .eq(AiChatSession::getStatus, "active")
+        );
+        if (session == null) {
+            throw new RuntimeException("会话不存在或无权访问");
+        }
+        return session;
+    }
+
     // ======================== SSE 流式接口 ========================
 
     /**
@@ -117,14 +131,14 @@ public class ToolChatService {
             //创建新会话
             session = createSession(request, currentUser);
         }else {
-            session = aiChatSessionMapper.selectById(sessionId);
+            session = getOwnedSession(sessionId, currentUser.getId());
             if (session == null) {
                 // 前端传的 sessionId 在 DB 中不存在（如前端本地临时ID），自动创建新会话
                 log.info("sessionId={} 未找到，自动创建新会话", sessionId);
                 session = createSession(request, currentUser);
             }
-            sessionId = session.getId();
         }
+        sessionId = session.getId();
 
         //保存用户消息
         AiChatMessage userMsg = new AiChatMessage()
@@ -444,12 +458,13 @@ public class ToolChatService {
             //创建新会话
             session = createSession(request, sysUser);
         }else {
-            session = aiChatSessionMapper.selectById(sessionId);
+            session = getOwnedSession(sessionId, sysUser.getId());
             if (session == null) {
                 log.info("sessionId={} 未找到，自动创建新会话", sessionId);
                 session = createSession(request, sysUser);
             }
         }
+        sessionId = session.getId();
 
         //保存用户消息
         AiChatMessage userMsg = new AiChatMessage()

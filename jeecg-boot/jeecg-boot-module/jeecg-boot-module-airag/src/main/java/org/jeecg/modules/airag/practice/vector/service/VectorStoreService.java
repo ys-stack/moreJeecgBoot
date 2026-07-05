@@ -238,7 +238,7 @@ public class VectorStoreService {
      */
     public List<VectorSearchResultVO> searchByKnowledgeBaseIds(String query, int topK, List<String> knowledgeBaseIds) {
         if (knowledgeBaseIds == null || knowledgeBaseIds.isEmpty()) {
-            return search(query, topK, null);
+            return Collections.emptyList();
         }
         if (knowledgeBaseIds.size() == 1) {
             return search(query, topK, knowledgeBaseIds.get(0));

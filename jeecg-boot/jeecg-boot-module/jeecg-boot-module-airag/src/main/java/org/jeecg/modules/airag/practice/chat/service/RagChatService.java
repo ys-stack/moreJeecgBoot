@@ -29,11 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.ObjectUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.List;
-import java.util.UUID;
+import java.io.IOException;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -100,6 +97,24 @@ public class RagChatService {
         this.streamingChatModel = streamingChatModel;
     }
 
+    /*
+     * @Author: ys
+     * @Date: 2026/7/5 星期日 20:13
+     * @Desc: 防止会话越权
+     */
+    private AiChatSession getOwnedSession(String sessionId, String userId) {
+        AiChatSession session = sessionMapper.selectOne(
+                new LambdaQueryWrapper<AiChatSession>()
+                        .eq(AiChatSession::getId, sessionId)
+                        .eq(AiChatSession::getUserId, userId)
+                        .eq(AiChatSession::getStatus, "active")
+        );
+        if (session == null) {
+            throw new RuntimeException("会话不存在或无权访问");
+        }
+        return session;
+    }
+
     // ==================== 核心 RAG 流程 ====================
 
     /**
@@ -116,15 +131,13 @@ public class RagChatService {
         // ==================== Step 1: 会话管理 ====================
         // sessionId 为空 → 首次对话，自动创建会话
         AiChatSession session;
-        if (request.getSessionId() == null || request.getSessionId().isBlank()) {
+        String sessionId = request.getSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
             session = createSession(request, userId);
+            sessionId = session.getId();
         } else {
-            session = sessionMapper.selectById(request.getSessionId());
-            if (session == null) {
-                throw new RuntimeException("会话不存在: " + request.getSessionId());
-            }
+            session = getOwnedSession(sessionId, userId);
         }
-        String sessionId = session.getId();
 
         // ==================== Step 2: 保存用户消息 ====================
         AiChatMessage userMsg = new AiChatMessage()
@@ -161,12 +174,16 @@ public class RagChatService {
         log.info("RAG 向量检索完成: query='{}', 可访问KB数={}, 命中 {} 个 chunk, 过滤后 {} 个",
                 request.getQuery(), accessibleKbIds.size(), searchResults.size(), filteredResults.size());
 
+        if (ObjectUtils.isEmpty(filteredResults)) {
+            return buildNoReferenceResponse(session, userMsg, userId);
+        }
+
         // ==================== Step 4: 构建 LangChain4j 消息列表 ====================
-        List<ChatMessage> messages = buildRagMessages(searchResults, sessionId, request.getQuery());
+        List<ChatMessage> messages = buildRagMessages(filteredResults, sessionId, request.getQuery());
 
         // ==================== Step 5: 调用大模型 ====================
         long startTime = System.currentTimeMillis();
-        String ragContextJson = JSON.toJSONString(searchResults);
+        String ragContextJson = JSON.toJSONString(filteredResults);
 
         try {
             ChatResponse chatResponse = chatModel.chat(messages);
@@ -310,19 +327,23 @@ public class RagChatService {
         // ===== 前置步骤（同步，快速返回错误给前端） =====
         // Step 1: 会话管理
         AiChatSession session;
-        if (request.getSessionId() == null || request.getSessionId().isBlank()) {
+        String sessionId = request.getSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
             session = createSession(request, userId);
         } else {
-            session = sessionMapper.selectById(request.getSessionId());
-            if (session == null) {
+            try{
+                session = getOwnedSession(sessionId, userId);
+            }catch (Exception e){
                 try {
-                    emitter.send(SseEmitter.event().name("error").data("会话不存在: " + request.getSessionId()));
+                    emitter.send(SseEmitter.event().name("error").data(e.getMessage()));
                     emitter.complete();
-                } catch (Exception ignored) {}
+                } catch (IOException sendError) {
+                    emitter.completeWithError(sendError);
+                }
                 return emitter;
             }
         }
-        String sessionId = session.getId();
+        sessionId = session.getId();
 
         // Step 2: 保存用户消息
         AiChatMessage userMsg = new AiChatMessage()
@@ -361,6 +382,19 @@ public class RagChatService {
                 .collect(Collectors.toList());
         log.info("[{}] 分数过滤: 原始={}, 过滤后={}, 阈值={}", requestId, searchResults.size(), filteredResults.size(), minScore);
 
+        if (ObjectUtils.isEmpty(filteredResults)) {
+            RagChatResponse response = buildNoReferenceResponse(session, userMsg, userId);
+            try {
+                emitter.send(SseEmitter.event().name("meta").data(JSON.toJSONString(response)));
+                emitter.send(SseEmitter.event().name("message").data(response.getAnswer()));
+                emitter.send(SseEmitter.event().name("done").data(""));
+                emitter.complete();
+            } catch (IOException e) {
+                log.warn("[{}] 发送无引用响应失败", requestId, e);
+                emitter.completeWithError(e);
+            }
+            return emitter;
+        }
         // Step 4: 构建消息列表（使用过滤后的结果）
         List<ChatMessage> messages = buildRagMessages(filteredResults, session.getId(), request.getQuery());
         String ragContextJson = JSON.toJSONString(filteredResults);
@@ -508,6 +542,42 @@ public class RagChatService {
         return emitter;
     }
 
+    /*
+     * @Author: ys
+     * @Date: 2026/7/5 星期日 21:26
+     * @Desc: 构建拒答消息
+     */
+    private RagChatResponse buildNoReferenceResponse(AiChatSession session, AiChatMessage userMsg, String userId) {
+        String answer = "知识库中未找到相关信息，建议补充相关文档到知识库";
+
+        AiChatMessage assistantMsg = new AiChatMessage()
+                .setSessionId(session.getId())
+                .setParentMessageId(userMsg.getId())
+                .setRole("assistant")
+                .setContent(answer)
+                .setRagContext("[]")
+                .setRagChunkCount(0)
+                .setModelProvider("openai")
+                .setModelName(modelName)
+                .setDurationMs(0L)
+                .setStatus("success")
+                .setCreateBy(userId)
+                .setCreateTime(new Date());
+
+        messageMapper.insert(assistantMsg);
+        updateSessionAfterChat(session, userMsg.getId());
+
+        return RagChatResponse.builder()
+                .sessionId(session.getId())
+                .userMessageId(userMsg.getId())
+                .assistantMessageId(assistantMsg.getId())
+                .answer(answer)
+                .references(RagChatResponse.fromSearchResults(Collections.emptyList()))
+                .model(modelName)
+                .durationMs(0L)
+                .build();
+    }
+
     // ==================== 会话 & 消息查询 ====================
 
     /**
@@ -524,7 +594,8 @@ public class RagChatService {
     /**
      * 查询某个会话的所有消息（按创建时间正序）
      */
-    public List<AiChatMessage> listMessages(String sessionId) {
+    public List<AiChatMessage> listMessages(String sessionId,String userId) {
+        getOwnedSession(sessionId, userId);
         LambdaQueryWrapper<AiChatMessage> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(AiChatMessage::getSessionId, sessionId)
                 .orderByAsc(AiChatMessage::getCreateTime);
