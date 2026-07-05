@@ -56,3 +56,11 @@ VALUES
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000008'),
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000009'),
     (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000010');
+
+-- 11. 注册子菜单「AI评测管理」
+INSERT INTO sys_permission (id, parent_id, name, url, component, is_route, component_name, redirect, menu_type, perms, perms_type, sort_no, always_show, icon, is_leaf, keep_alive, hidden, hide_tab, description, create_by, create_time, update_by, update_time, del_flag, rule_flag, status, internal_or_external)
+VALUES ('9000000000000000011', '9000000000000000001', 'AI评测管理', '/practice-ai/eval-manage', 'practice/evalmanage/index', 1, NULL, NULL, 1, NULL, '1', 9.0, 0, 'ant-design:experiment-outlined', 1, 0, 0, 0, 'RAG与Agent评测集、评测结果管理', 'admin', NOW(), 'admin', NOW(), 0, 0, '1', 0);
+
+-- 12. 给 admin 角色授权「AI评测管理」
+INSERT INTO sys_role_permission (id, role_id, permission_id)
+VALUES (REPLACE(UUID(), '-', ''), 'f6817f48af4fb3af11b9e8bf182f618b', '9000000000000000011');
