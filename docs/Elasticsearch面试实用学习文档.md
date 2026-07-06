@@ -6,13 +6,182 @@
 
 ---
 
+## 零、先把 ES JSON、字段和查询看懂
+
+如果你看 ES 文档觉得云里雾里，通常不是因为概念太难，而是 ES 把 **HTTP 接口、索引结构、字段类型、查询条件、排序、聚合** 全塞进 JSON 里了。先记住一句话：
+
+> ES 的 JSON 不是普通配置文件，而是在告诉 ES：我要建什么索引、字段怎么存、数据怎么写、查询怎么查、结果怎么排。
+
+### 0.1 一条 ES 请求怎么看
+
+ES 请求一般由两部分组成：
+
+```text
+HTTP 方法 + 路径
+JSON 请求体
+```
+
+例如：
+
+```jsonc
+PUT /product_index
+{
+  "mappings": {
+    "properties": {
+      "title": { "type": "text" },
+      "status": { "type": "keyword" }
+    }
+  }
+}
+```
+
+逐行拆开看：
+
+| 位置 | 含义 |
+| --- | --- |
+| `PUT /product_index` | 创建一个叫 `product_index` 的索引。可以先粗暴理解成 MySQL 里建一张商品搜索表。 |
+| `mappings` | 定义字段结构，类似 MySQL 的 `CREATE TABLE`。 |
+| `properties` | 字段列表。里面每一个 key 都是一个字段。 |
+| `title` | 商品标题字段。 |
+| `{ "type": "text" }` | `title` 要分词，适合全文搜索。 |
+| `status` | 商品状态字段。 |
+| `{ "type": "keyword" }` | `status` 不分词，适合精确过滤，比如 `ON_SALE`。 |
+
+看 ES JSON 时，不要从大括号开始背。先问四个问题：
+
+1. 这是在 **建索引**、**写数据**，还是 **查数据**？
+2. 当前字段是要 **全文搜索**，还是 **精确过滤/排序/聚合**？
+3. 当前查询条件要不要参与相关性打分？
+4. 返回结果需要哪些字段、怎么排序、要不要统计聚合？
+
+### 0.2 字段类型先记这几种就够了
+
+先不要被 ES 的字段类型吓到，面试和业务里最常用的是下面这些：
+
+| 字段类型 | 你可以理解成 | 适合存什么 | 常用查询 |
+| --- | --- | --- | --- |
+| `keyword` | 原样字符串，不分词 | ID、状态、分类、品牌、手机号、枚举值 | `term`、`terms`、排序、聚合 |
+| `text` | 会分词的文本 | 标题、描述、正文、评论内容 | `match` |
+| `integer` / `long` | 整数 | 价格分、库存、次数、年龄 | `term`、`range`、排序、聚合 |
+| `date` | 时间 | 创建时间、更新时间、日志时间 | `range`、排序、日期聚合 |
+| `boolean` | 布尔值 | 是否删除、是否启用 | `term` |
+| `object` | 普通 JSON 对象 | 单个对象或不需要保持数组对象关系的数据 | 普通字段查询 |
+| `nested` | 独立嵌套对象数组 | 订单明细、人员数组，并且要保持同一个对象内字段关系 | `nested` 查询 |
+
+最重要的是 `keyword` 和 `text`：
+
+```text
+keyword：整块存，适合精确查。
+text：拆词存，适合模糊搜、全文搜。
+```
+
+例子：
+
+```text
+字段值："Java Redis 面试"
+
+keyword 存法："Java Redis 面试" 作为一个整体。
+text 存法：拆成 "java"、"redis"、"面试" 这些词。
+```
+
+所以：
+
+- `status = ON_SALE` 用 `keyword + term`。
+- `title 搜 Java Redis` 用 `text + match`。
+- `brand 做聚合统计` 用 `keyword`。
+- `price 做区间查询` 用数值类型 + `range`。
+
+### 0.3 查询 JSON 先看这几个积木
+
+ES 查询 DSL 看着复杂，本质是几个积木拼起来：
+
+| DSL | 作用 | 典型写法 | 适合字段 |
+| --- | --- | --- | --- |
+| `match` | 全文搜索，会先分词 | `{ "match": { "title": "Java Redis" } }` | `text` |
+| `term` | 精确匹配，不分词 | `{ "term": { "status": "ON_SALE" } }` | `keyword`、数值、布尔 |
+| `terms` | 多个精确值匹配 | `{ "terms": { "brand": ["apple", "huawei"] } }` | `keyword` |
+| `range` | 范围查询 | `{ "range": { "price": { "gte": 1000, "lte": 20000 } } }` | 数值、日期 |
+| `exists` | 字段存在 | `{ "exists": { "field": "coverUrl" } }` | 任意字段 |
+| `bool.must` | 必须满足，并参与打分 | 标题必须匹配关键词 | 全文搜索条件 |
+| `bool.filter` | 必须满足，但不打分，可缓存 | 状态、分类、价格过滤 | 精确过滤条件 |
+| `bool.should` | 最好满足，可提高分数 | 命中品牌、标签时加分 | 加权召回 |
+| `bool.must_not` | 必须不满足 | 排除已删除数据 | 过滤条件 |
+
+先把这张表吃透，再看复杂 JSON 就不会迷路。
+
+### 0.4 一个搜索请求的固定骨架
+
+大多数搜索请求都长这样：
+
+```jsonc
+POST /索引名/_search
+{
+  "from": 0,
+  "size": 20,
+  "_source": ["返回字段1", "返回字段2"],
+  "query": {
+    "bool": {
+      "must": [],
+      "filter": [],
+      "should": [],
+      "must_not": []
+    }
+  },
+  "sort": [],
+  "aggs": {}
+}
+```
+
+各字段含义：
+
+| 字段 | 作用 | 可以先怎么理解 |
+| --- | --- | --- |
+| `from` | 从第几条开始取 | 第几页的起点 |
+| `size` | 返回多少条 | 每页条数 |
+| `_source` | 返回哪些字段 | 类似 SQL 里的 select 列 |
+| `query` | 查询条件 | 类似 SQL 的 where，但支持全文检索和打分 |
+| `must` | 必须满足，参与打分 | 关键词搜索通常放这里 |
+| `filter` | 必须满足，不参与打分 | 状态、分类、价格区间放这里 |
+| `sort` | 排序 | 按分数、时间、价格排序 |
+| `aggs` | 聚合统计 | 分组统计，比如品牌数量、价格区间 |
+
+可以把它类比成 SQL：
+
+```sql
+SELECT id, title, brand, price
+FROM product_index
+WHERE title MATCH 'Java Redis'
+  AND status = 'ON_SALE'
+  AND category_id = 'book'
+  AND price BETWEEN 1000 AND 20000
+ORDER BY score DESC, created_at DESC
+LIMIT 0, 20;
+```
+
+注意：ES 不是 SQL 数据库，这个类比只是帮你理解结构。
+
+---
+
 ## 先看一个直观示例：商品搜索
 
 Elasticsearch 最直观的作用是：**让用户按关键词、分类、价格区间、品牌、排序等条件快速搜索商品**。MySQL 可以做精确查询，但面对全文检索、相关性排序、聚合筛选时会很吃力。
 
-先设计一个商品索引：
+### 第一步：先设计商品字段
 
-```json
+假设商品搜索页需要这些能力：
+
+| 页面能力 | 需要的字段 | 字段类型 | 原因 |
+| --- | --- | --- | --- |
+| 搜标题关键词 | `title` | `text` | 标题要分词，比如搜 `Java Redis` 能命中标题里的词。 |
+| 按品牌筛选 | `brand` | `keyword` | 品牌是精确值，还要做聚合统计。 |
+| 按分类筛选 | `categoryId` | `keyword` | 分类 ID 是精确值，不需要分词。 |
+| 按价格区间筛选 | `price` | `integer` | 金额用分存整数，方便范围查询。 |
+| 只查上架商品 | `status` | `keyword` | 状态是枚举值，精确过滤。 |
+| 按时间排序 | `createdAt` | `date` | 时间字段支持排序和范围查询。 |
+
+对应的 Mapping：
+
+```jsonc
 PUT /product_index
 {
   "mappings": {
@@ -35,7 +204,14 @@ PUT /product_index
 }
 ```
 
-写入一个商品文档：
+这段 JSON 的重点不是背格式，而是理解字段选择：
+
+- `title` 用 `text`：为了全文搜索。
+- `title.keyword` 是子字段：同一个标题如果将来要精确匹配、排序或聚合，可以走 `title.keyword`。
+- `brand/status/categoryId` 用 `keyword`：为了精确过滤和聚合。
+- `price/createdAt` 用数值和日期：为了范围查询和排序。
+
+### 第二步：写入一条商品文档
 
 ```json
 POST /product_index/_doc/10001
@@ -50,9 +226,56 @@ POST /product_index/_doc/10001
 }
 ```
 
-用户搜索"Java Redis"，并按状态、分类、价格过滤，同时按相关性和时间排序：
+可以把这段理解成 MySQL 里插入一行商品搜索视图。真正的商品主数据通常仍然在 MySQL，ES 里存的是为了搜索而设计的冗余数据。
+
+### 第三步：先写最小查询
+
+用户只搜标题里的 `Java Redis`：
 
 ```json
+POST /product_index/_search
+{
+  "query": {
+    "match": {
+      "title": "Java Redis"
+    }
+  }
+}
+```
+
+这一步只做一件事：对 `title` 做全文检索。`match` 会把 `Java Redis` 分词，再去倒排索引里找包含这些词的商品。
+
+### 第四步：加精确过滤条件
+
+只查上架商品、图书分类、价格在 10 到 200 元之间：
+
+```jsonc
+POST /product_index/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        { "match": { "title": "Java Redis" } }
+      ],
+      "filter": [
+        { "term": { "status": "ON_SALE" } },
+        { "term": { "categoryId": "book" } },
+        { "range": { "price": { "gte": 1000, "lte": 20000 } } }
+      ]
+    }
+  }
+}
+```
+
+这里的理解关键：
+
+- `must` 里的 `match`：负责搜索关键词，并影响 `_score` 分数。
+- `filter` 里的 `term/range`：只负责过滤，不影响分数，性能更好。
+- `gte/lte`：大于等于、小于等于。
+
+### 第五步：加分页、返回字段、排序和聚合
+
+```jsonc
 POST /product_index/_search
 {
   "from": 0,
@@ -76,19 +299,22 @@ POST /product_index/_search
   ],
   "aggs": {
     "brand_count": {
-      "terms": { "field": "brand" }
+      "terms": { "field": "brand", "size": 10 }
     }
   }
 }
 ```
 
-这个例子里 ES 做了几件 MySQL 不擅长的事：
+这份完整查询可以按模块读：
 
-1. `title` 分词后做全文检索。
-2. `filter` 做精确过滤，不参与打分。
-3. `_score` 做相关性排序。
-4. `aggs` 做品牌聚合，支撑前端筛选项。
-5. `_source` 控制返回字段，减少网络传输。
+| 模块 | 作用 |
+| --- | --- |
+| `from/size` | 分页。 |
+| `_source` | 只返回页面要展示的字段，减少网络传输。 |
+| `query.bool.must` | 全文搜索标题，计算相关性分数。 |
+| `query.bool.filter` | 精确过滤状态、分类、价格，不计算分数。 |
+| `sort` | 先按相关性 `_score` 排，再按创建时间排。 |
+| `aggs.brand_count` | 按品牌分组统计数量，用于前端筛选栏。 |
 
 工程上通常是：MySQL 存事实数据，ES 存搜索视图。商品变更后通过 MQ 或 binlog 同步到 ES，接受短暂最终一致。
 
@@ -96,6 +322,8 @@ POST /product_index/_search
 
 ## 目录
 
+- [零、先把 ES JSON、字段和查询看懂](#零先把-es-json字段和查询看懂)
+- [先看一个直观示例：商品搜索](#先看一个直观示例商品搜索)
 - [一、Elasticsearch 面试主线](#一elasticsearch-面试主线)
 - [二、Elasticsearch 到底解决什么问题](#二elasticsearch-到底解决什么问题)
 - [三、核心概念：Index、Document、Shard、Replica](#三核心概念indexdocumentshardreplica)
@@ -442,7 +670,7 @@ text 存储（standard analyzer）: ["java", "redis", "面试", "突击"]（分�
 
 `match` 内部其实是多个 `term` 查询的 OR 组合（默认），可以通过 `operator` 参数控制：
 
-```json
+```jsonc
 // 默认 or：包含 java 或 redis 的文档都返回，按命中数量打分
 {"match": {"title": "Java Redis"}}
 
@@ -633,6 +861,58 @@ ES 的搜索采用 **两阶段查询（Query Then Fetch）** 模式：
 - 只需要过滤不需要排序的条件放 `filter`。Filter 不打分、速度快、结果可缓存。
 - 上面商品搜索示例中，`title` 搜索放 `must`，`status`、`categoryId`、`price` 过滤放 `filter`，这就是最佳实践。
 
+### 6.2.1 查询 DSL 积木表：先会拼，再谈优化
+
+初学 ES 查询时，不要直接背一整段大 JSON。先把常用查询当成积木：
+
+| 你想表达的业务条件 | 推荐 DSL | 示例 | 放在哪里 |
+| --- | --- | --- | --- |
+| 标题包含关键词 | `match` | `{ "match": { "title": "Redis 持久化" } }` | `must` |
+| 状态等于某个值 | `term` | `{ "term": { "status": "ON_SALE" } }` | `filter` |
+| 品牌属于多个值 | `terms` | `{ "terms": { "brand": ["apple", "huawei"] } }` | `filter` |
+| 价格区间 | `range` | `{ "range": { "price": { "gte": 1000, "lte": 5000 } } }` | `filter` |
+| 创建时间最近 7 天 | `range` | `{ "range": { "createdAt": { "gte": "now-7d" } } }` | `filter` |
+| 字段不能为空 | `exists` | `{ "exists": { "field": "coverUrl" } }` | `filter` |
+| 排除逻辑删除 | `term` + `must_not` | `{ "term": { "deleted": true } }` | `must_not` |
+| 命中某条件加分 | `should` | `{ "match": { "tags": "官方" } }` | `should` |
+
+一个比较标准的业务查询模板：
+
+```jsonc
+POST /product_index/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        { "match": { "title": "Redis 持久化" } }
+      ],
+      "filter": [
+        { "term": { "status": "ON_SALE" } },
+        { "terms": { "brand": ["tech-book", "official"] } },
+        { "range": { "price": { "gte": 1000, "lte": 5000 } } }
+      ],
+      "must_not": [
+        { "term": { "deleted": true } }
+      ],
+      "should": [
+        { "match": { "tags": "经典" } }
+      ]
+    }
+  }
+}
+```
+
+读这段 JSON 时按顺序拆：
+
+1. `must`：用户搜什么，决定相关性分数。
+2. `filter`：业务筛选条件，必须满足但不打分。
+3. `must_not`：排除哪些数据。
+4. `should`：命中了更好，可以提高排序。
+
+面试里可以这样说：
+
+> 我一般把全文检索条件放在 `must`，让它参与 `_score` 打分；把状态、租户、分类、时间范围这类结构化条件放在 `filter`，因为它们只做过滤，不需要打分，还可以利用缓存。这样 DSL 的语义清楚，性能也更好。
+
 ### 6.3 为什么查询会慢
 
 常见原因：
@@ -663,54 +943,97 @@ ES 的搜索采用 **两阶段查询（Query Then Fetch）** 模式：
 
 ### 6.5 常用聚合类型
 
+聚合可以先理解成 SQL 里的 `GROUP BY` 和统计函数。常用的就几类。
+
+**1. Terms 聚合：按字段值分桶**
+
+适合统计品牌、状态、分类数量：
+
 ```json
-// 1. Terms 聚合：按字段值分桶（最常用）
-"aggs": {
-  "brand_count": {
-    "terms": { "field": "brand", "size": 10 }
-  }
-}
-
-// 2. Date Histogram：按时间分桶
-"aggs": {
-  "monthly_sales": {
-    "date_histogram": {
-      "field": "createdAt",
-      "calendar_interval": "month"
-    }
-  }
-}
-
-// 3. Range 聚合：按区间分桶
-"aggs": {
-  "price_ranges": {
-    "range": {
-      "field": "price",
-      "ranges": [
-        { "to": 1000 },
-        { "from": 1000, "to": 5000 },
-        { "from": 5000 }
-      ]
-    }
-  }
-}
-
-// 4. Metrics 聚合：计算统计值
-"aggs": {
-  "avg_price": { "avg": { "field": "price" } },
-  "max_price": { "max": { "field": "price" } }
-}
-
-// 5. 嵌套聚合：桶里再分桶
-"aggs": {
-  "brand_count": {
-    "terms": { "field": "brand" },
-    "aggs": {
-      "avg_price": { "avg": { "field": "price" } }
+{
+  "aggs": {
+    "brand_count": {
+      "terms": { "field": "brand", "size": 10 }
     }
   }
 }
 ```
+
+含义：按 `brand` 分组，取数量最多的 10 个品牌。
+
+**2. Date Histogram：按时间分桶**
+
+适合按天、月统计日志量、订单量：
+
+```json
+{
+  "aggs": {
+    "monthly_sales": {
+      "date_histogram": {
+        "field": "createdAt",
+        "calendar_interval": "month"
+      }
+    }
+  }
+}
+```
+
+含义：按 `createdAt` 的月份分组。
+
+**3. Range 聚合：按区间分桶**
+
+适合价格区间、年龄区间：
+
+```json
+{
+  "aggs": {
+    "price_ranges": {
+      "range": {
+        "field": "price",
+        "ranges": [
+          { "to": 1000 },
+          { "from": 1000, "to": 5000 },
+          { "from": 5000 }
+        ]
+      }
+    }
+  }
+}
+```
+
+含义：统计 10 元以下、10 到 50 元、50 元以上的商品数量。这里假设 `price` 单位是分。
+
+**4. Metrics 聚合：计算统计值**
+
+适合平均值、最大值、最小值：
+
+```json
+{
+  "aggs": {
+    "avg_price": { "avg": { "field": "price" } },
+    "max_price": { "max": { "field": "price" } }
+  }
+}
+```
+
+含义：计算平均价格和最高价格。
+
+**5. 嵌套聚合：桶里再算指标**
+
+```json
+{
+  "aggs": {
+    "brand_count": {
+      "terms": { "field": "brand" },
+      "aggs": {
+        "avg_price": { "avg": { "field": "price" } }
+      }
+    }
+  }
+}
+```
+
+含义：先按品牌分组，再统计每个品牌的平均价格。
 
 ---
 
@@ -728,6 +1051,44 @@ Mapping 就是定义 Index 的字段结构，类似于 MySQL 的 `CREATE TABLE`�
 4. **时间字段使用 `date`**：ES 的 `date` 类型支持范围查询和日期聚合。
 5. **控制字段数量**：ES 默认限制单个 Index 最多 1000 个字段。字段太多会导致 Mapping 爆炸，集群状态更新变慢。
 6. **不需要搜索/聚合的字段设 `enabled: false` 或 `index: false`**：减少倒排索引体积。
+
+### 7.1.1 字段设计决策表
+
+设计 Mapping 时，可以按这个顺序判断：
+
+| 问题 | 选择 |
+| --- | --- |
+| 这个字段要被用户按关键词搜索吗？ | 用 `text`，配合 `match`。 |
+| 这个字段只是状态、ID、枚举、编码吗？ | 用 `keyword`，配合 `term/terms`。 |
+| 这个字段要排序或聚合吗？ | 优先用 `keyword`、数值、日期，不要直接用 `text`。 |
+| 金额字段有小数吗？ | 业务里通常转成整数分，用 `integer/long`。 |
+| 时间字段要做范围查询或按天/月统计吗？ | 用 `date`。 |
+| 一个字段既要全文搜索，又要精确匹配吗？ | 用 `text` + `fields.keyword` 多字段。 |
+| JSON 数组对象里字段之间必须保持对应关系吗？ | 用 `nested`，否则普通 `object` 可能误匹配。 |
+| 字段只用于展示，不需要搜索、排序、聚合吗？ | 可以考虑 `index: false`，减少索引体积。 |
+
+一个常见商品 Mapping 可以这样读：
+
+```jsonc
+{
+  "title": {
+    "type": "text",
+    "analyzer": "ik_max_word",
+    "fields": {
+      "keyword": { "type": "keyword" }
+    }
+  },
+  "brand": { "type": "keyword" },
+  "price": { "type": "integer" },
+  "createdAt": { "type": "date" }
+}
+```
+
+- `title`：主字段用于全文搜索。
+- `title.keyword`：子字段用于精确匹配、排序或聚合。
+- `brand`：品牌筛选和聚合，不需要分词。
+- `price`：价格区间查询。
+- `createdAt`：时间范围查询和排序。
 
 ### 7.2 常用字段类型一览
 
@@ -749,7 +1110,7 @@ Mapping 就是定义 Index 的字段结构，类似于 MySQL 的 `CREATE TABLE`�
 
 这是初学者容易踩的坑。ES 存储 JSON 文档时，默认会把嵌套对象**扁平化**：
 
-```json
+```jsonc
 // 写入的文档
 {
   "user": [
@@ -811,7 +1172,7 @@ ES 默认开启 Dynamic Mapping——写入一个新字段时自动推断类型�
 
 生产建议：
 
-```json
+```jsonc
 // 关闭自动推断，未定义字段写入会报错
 {
   "mappings": {
@@ -875,7 +1236,7 @@ ES 默认限制 `from + size` 最大为 10000（`max_result_window`），超过�
 
 `search_after` 示例：
 
-```json
+```jsonc
 // 第一页
 POST /product_index/_search
 {
@@ -1142,7 +1503,7 @@ GET /_cluster/allocation/explain
 
 Shard 迁移涉及大量数据在网络上传输，会影响集群性能。可以通过以下配置控制：
 
-```json
+```jsonc
 // 限制同时迁移的 Shard 数量
 PUT /_cluster/settings
 {
@@ -1321,7 +1682,7 @@ PUT /_index_template/app-log-template
 
 ES 的 Ingest Pipeline 可以在写入前对文档做转换：
 
-```json
+```jsonc
 PUT /_ingest/pipeline/product-pipeline
 {
   "processors": [
