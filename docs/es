@@ -1,0 +1,32 @@
+es
+1.es请求一般分为两部分，http方法+路径、JSON请求体
+如查询常见结构：
+	POST /索引名/_search
+	{
+	  "from": 0,
+	  "size": 20,  //分页
+	  "_source": ["返回字段1", "返回字段2"],
+	  "query": {
+	    "bool": {
+	      "must": [],
+	      "filter": [],
+	      "should": [],
+	      "must_not": []
+	    }
+	  },
+	  "sort": [],  //排序
+	  "aggs": {}   //聚合统计
+	}
+2.常见字段类型，keyword,text,integer/long,date,boolean等
+	keyword存整块，适合精确查
+	text分词，适合全文搜
+3.常见ES查询DSL
+	match:全文搜索，先分词。如{ "match": { "title": "Java Redis" } }
+	term:精确匹配，不分词，如`{ "term": { "status": "ON_SALE" } }`
+	terms:多个精确值匹配，如`{ "terms": { "brand": ["apple", "huawei"] } }`
+	range:范围查询，如`{ "range": { "price": { "gte": 1000, "lte": 20000 } } }`
+	exists:字段存在，如`{ "exists": { "field": "coverUrl" } }`
+	`bool.must`:必须满足，并参与打分
+	`bool.must`:必须满足，但不打分可缓存
+	`bool.should`:最好满足，可加分
+	`bool.must_not`：必须不满足
