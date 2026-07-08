@@ -1,0 +1,78 @@
+es
+1.es请求一般分为两部分，http方法+路径、JSON请求体
+如查询常见结构：
+	POST /索引名/_search
+	{
+	  "from": 0,
+	  "size": 20,  //分页
+	  "_source": ["返回字段1", "返回字段2"],
+	  "query": {
+	    "bool": {
+	      "must": [],
+	      "filter": [],
+	      "should": [],
+	      "must_not": []
+	    }
+	  },
+	  "sort": [],  //排序
+	  "aggs": {}   //聚合统计
+	}
+常见写结构：
+	PUT /product_index
+	{
+	  "mappings": {
+	    "properties": {
+	      "id": { "type": "keyword" },
+	      "title": {               //后续查询子字段还可以走keyword
+	        "type": "text",
+	        "analyzer": "ik_max_word",
+	        "fields": {
+	          "keyword": { "type": "keyword" }
+	        }
+	      },                     
+	      "brand": { "type": "keyword" },
+	      "categoryId": { "type": "keyword" },
+	      "price": { "type": "integer" },
+	      "status": { "type": "keyword" },
+	      "createdAt": { "type": "date" }
+	    }
+  		}
+	}
+2.常见字段类型，keyword,text,integer/long,date,boolean等
+	keyword存整块，适合精确查
+	text分词，适合全文搜
+3.常见ES查询DSL
+	match:全文搜索，先分词。如{ "match": { "title": "Java Redis" } }
+	term:精确匹配，不分词，如`{ "term": { "status": "ON_SALE" } }`
+	terms:多个精确值匹配，如`{ "terms": { "brand": ["apple", "huawei"] } }`
+	range:范围查询，如`{ "range": { "price": { "gte": 1000, "lte": 20000 } } }`
+	exists:字段存在，如`{ "exists": { "field": "coverUrl" } }`
+	`bool.must`:必须满足，并参与打分
+	`bool.must`:必须满足，但不打分可缓存
+	`bool.should`:最好满足，可加分
+	`bool.must_not`：必须不满足
+4.ES和MYSQL的定位：
+ES更多的是做全文检索，日志检索分析，更多是作为视图。MYSQL承载核心业务数据，支持事务保证数据强一致。两者之间通过同步链路做最终一致5.核心概念：
+	index（索引）:类似数据库中的表，是一类文档的集合，生产环境是被拆成多个分片分布在多个节点上
+	Document（文档）：类似数据库中的表一行数据
+	Field（字段）
+	Shard（分片）:Index的水平拆分，分片是es分布式存储和并行查询的基本单位。
+	Replica（副本）：每个主分片可以有0到多个副本，提供高可用和读扩展能力
+	Node（节点）
+	Cluster（集群）
+重点注意shard,一个分片底层就是一个完整的(Lucene)搜索引擎索引，每个由多个Segment（段）组成
+每个段更新实质是写入新文档到新的段，再把标记的旧文档删除；多个小的段会被后台合并成大的(Segment 越多，搜索开销越大)
+
+Shard设计：
+首要考虑数据分布，查询并行，单分片大小，后续扩展成本四点：
+1.数据分布：不同 Shard 可以分布在不同 Node 上，实现水平扩展
+2.查询并行：搜索请求会分发到相关的shard上，并行执行后汇总结果
+3.单分片大小应在10-50G之间，数量≈ Index 总数据量 / 单个分片目标大小（30GB 左右）。分片多了集群状态更新慢，查询慢，分片本身也有固定的开销，分片少了恢复时间过长，查询并行度不够
+4.后续扩展：主分片数一旦创建就不能改（除非 Reindex），所以需要提前规划。
+
+6.倒排索引和分词原理
+倒排索引其实就是根据value去找key，即根据内容找文档id。全文检索先在倒排索引找到候选文档ID列表，再做运算，打分，排序等
+
+分词原理就是把文本拆成一个个token词项，存入倒排索引
+常见的分词器英文默认分词器，ik中文分词器(分粗细)
+
