@@ -1,315 +1,369 @@
-# Elasticsearch 本地虚拟机生产模拟部署实操文档
+# Elasticsearch 真实生产环境部署实操文档（3 Master + 3 Data + 2 Coordinating）
 
-> 这份文档模拟一个已上线大项目的搜索服务架构，在本地 CentOS 7 虚拟机上用 Docker Compose 部署 3 节点 Elasticsearch 8.17.0 集群，并完成索引设计、别名切换、数据写入、向量搜索（dense_vector + kNN）、查询验证、快照备份、故障演练和排查。你可以按步骤一点点敲。
+> 这份文档不再模拟“单台虚拟机里跑 3 个 master/data 混合节点”，而是按更接近真实生产的方式设计：**3 个 dedicated master 节点 + 3 个 dedicated data 节点 + 2 个 coordinating-only 路由节点**。业务服务只访问路由节点或负载均衡地址，master 不承担读写流量，data 专注存储、索引、检索和向量搜索。
+>
+> 版本示例仍使用 `docker.elastic.co/elasticsearch/elasticsearch:8.17.0`，因为你本地已经按这个版本练习过。真实公司环境应统一使用团队认证过的 ES 版本，所有节点版本必须一致。
 
-![本地虚拟机模拟大项目 Elasticsearch 架构](images/es-deploy-01-architecture.svg)
+---
 
 ## 目录
 
-- [一、模拟的大项目架构](#一模拟的大项目架构)
-- [二、你的本地虚拟机准备](#二你的本地虚拟机准备)
-- [三、安装 Docker 和 Compose](#三安装-docker-和-compose)
-- [四、准备目录和系统参数](#四准备目录和系统参数)
-- [五、编写 docker-compose.yml](#五编写-docker-composeyml)
-- [六、启动 3 节点 ES + Kibana](#六启动-3-节点-es--kibana)
-- [七、验证集群状态](#七验证集群状态)
-- [八、创建生产风格索引模板和别名](#八创建生产风格索引模板和别名)
-- [九、写入商品数据并查询](#九写入商品数据并查询)
-- [十、向量搜索索引与 kNN 查询](#十向量搜索索引与-knn-查询)
-- [十一、模拟 MySQL 到 ES 的同步链路](#十一模拟-mysql-到-es-的同步链路)
-- [十二、Kibana 基础使用（可选）](#十二kibana-基础使用可选)
-- [十三、快照备份与恢复演练](#十三快照备份与恢复演练)
-- [十四、故障演练](#十四故障演练)
-- [十五、常见问题排查](#十五常见问题排查)
-- [十六、面试怎么讲这套部署](#十六面试怎么讲这套部署)
+- [一、生产拓扑设计](#一生产拓扑设计)
+- [二、服务器规划](#二服务器规划)
+- [三、网络与端口规划](#三网络与端口规划)
+- [四、系统参数准备](#四系统参数准备)
+- [五、证书与安全策略](#五证书与安全策略)
+- [六、节点配置模板](#六节点配置模板)
+- [七、按角色启动节点](#七按角色启动节点)
+- [八、负载均衡与业务连接](#八负载均衡与业务连接)
+- [九、验证集群状态](#九验证集群状态)
+- [十、索引模板、分片和别名](#十索引模板分片和别名)
+- [十一、RAG 向量索引方案](#十一rag-向量索引方案)
+- [十二、备份、监控和日志](#十二备份监控和日志)
+- [十三、故障演练](#十三故障演练)
+- [十四、生产禁忌清单](#十四生产禁忌清单)
+- [十五、面试和项目答辩话术](#十五面试和项目答辩话术)
 
 ---
 
-## 一、模拟的大项目架构
+## 一、生产拓扑设计
 
-我们模拟一个电商/低代码平台常见的搜索架构：
+### 1.1 推荐拓扑
 
 ```text
-Java 业务服务
-  -> MySQL 保存事实数据
-  -> MQ / Binlog / 定时任务同步搜索视图
-  -> Elasticsearch 存商品、订单、日志、向量索引
-  -> Kibana 做查询、调试、可视化（可选）
+                 Java / JeecgBoot / RAG 服务
+                           |
+                    ES 负载均衡地址
+                 https://es-search.example.com:9200
+                           |
+          +----------------+----------------+
+          |                                 |
+  es-coord-01                         es-coord-02
+  node.roles: []                      node.roles: []
+  只做请求路由、聚合、结果合并              只做请求路由、聚合、结果合并
+          |                                 |
+          +--------------+------------------+
+                         |
+    +--------------------+--------------------+
+    |                    |                    |
+es-data-01          es-data-02          es-data-03
+node.roles:          node.roles:          node.roles:
+[data,ingest]        [data,ingest]        [data,ingest]
+存分片、建索引、检索    存分片、建索引、检索    存分片、建索引、检索
+    |                    |                    |
+    +--------------------+--------------------+
+                         |
+    +--------------------+--------------------+
+    |                    |                    |
+es-master-01        es-master-02        es-master-03
+node.roles:          node.roles:          node.roles:
+[master]             [master]             [master]
+选主、元数据、分片分配  选主、元数据、分片分配  选主、元数据、分片分配
 ```
 
-本地虚拟机中部署：
+### 1.2 为什么要拆角色
 
-| 组件 | 数量 | 作用 |
+| 角色 | 是否存数据 | 是否处理业务查询 | 主要职责 |
+| --- | --- | --- | --- |
+| master | 否 | 否 | 选主、维护集群元数据、分片分配、节点加入退出 |
+| data | 是 | 间接处理 | 保存 primary/replica shard，执行索引写入、搜索、聚合、向量 kNN |
+| coordinating-only | 否 | 是 | 接收业务请求，转发到 data 节点，合并结果返回 |
+
+真实生产里，最怕的是 master 被查询、聚合、向量检索打爆。master 一旦不稳定，整个集群的分片分配、节点发现和元数据更新都会受影响。所以：
+
+1. **master 节点只做 master**，不让业务服务访问。
+2. **data 节点只做数据和计算**，主要承载索引、搜索、向量检索。
+3. **业务服务只连 coordinating 节点或 LB**，不直连 master。
+4. **3 个 master 是最小高可用数量**，可以容忍 1 个 master 宕机，仍然保留多数派选主能力。
+
+### 1.3 是否必须加 coordinating 节点
+
+如果只是中小规模集群，6 台机器也能跑：3 master + 3 data，业务通过 LB 连 3 个 data 节点。但更真实的生产方案建议加 **2 个 coordinating-only 节点**。
+
+加 coordinating 节点的价值：
+
+1. 业务连接点稳定，后端 data 节点扩缩容时业务无感。
+2. 大查询、聚合、跨分片结果合并不压在 data 节点 HTTP 层。
+3. Kibana、管理脚本、Java 服务都走同一组入口，访问控制更清晰。
+4. 两个 coordinating 节点可以做高可用，任意一个挂掉业务还能访问。
+
+本方案按 **8 台 ES 服务器** 设计，另外建议准备 1 台运维/监控服务器放 Kibana、Nginx/HAProxy、Prometheus 或备份脚本。
+
+---
+
+## 二、服务器规划
+
+### 2.1 生产推荐规格
+
+| 主机名 | IP 示例 | 节点角色 | CPU | 内存 | JVM Heap | 磁盘 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| es-master-01 | 10.10.10.11 | master | 2C | 4G | 1G | 50G SSD | dedicated master |
+| es-master-02 | 10.10.10.12 | master | 2C | 4G | 1G | 50G SSD | dedicated master |
+| es-master-03 | 10.10.10.13 | master | 2C | 4G | 1G | 50G SSD | dedicated master |
+| es-data-01 | 10.10.10.21 | data,ingest | 8C | 32G | 16G | 500G+ SSD | 存储和检索 |
+| es-data-02 | 10.10.10.22 | data,ingest | 8C | 32G | 16G | 500G+ SSD | 存储和检索 |
+| es-data-03 | 10.10.10.23 | data,ingest | 8C | 32G | 16G | 500G+ SSD | 存储和检索 |
+| es-coord-01 | 10.10.10.31 | coordinating-only | 4C | 8G | 2G | 50G SSD | 业务入口 |
+| es-coord-02 | 10.10.10.32 | coordinating-only | 4C | 8G | 2G | 50G SSD | 业务入口 |
+| es-ops-01 | 10.10.10.41 | Kibana/LB/脚本 | 2C | 4G | - | 100G | 非 ES 节点 |
+
+> JVM Heap 不要无脑给满内存。data 节点要给 Lucene 文件系统缓存、向量索引、segment merge 和 OS 留足堆外空间。常见原则是 Heap 不超过机器内存 50%，并且尽量不要超过 31G。
+
+### 2.2 练习环境最低规格
+
+如果你是本地 VMware 多台虚拟机练习，可以降配：
+
+| 角色 | 台数 | 最低配置 |
 | --- | --- | --- |
-| Elasticsearch 8.17.0 | 3 节点 | 模拟生产集群（含向量搜索） |
-| Docker Compose | 1 套 | 编排服务 |
-| Kibana | 可选 | 后续按需加 |
+| master | 3 | 1C / 2G / Heap 512M |
+| data | 3 | 2C / 4G / Heap 2G |
+| coordinating | 2 | 1C / 2G / Heap 512M-1G |
 
-为什么是 3 节点？
-
-- 能模拟 master 选举
-- 能模拟副本分配
-- 能演练节点宕机
-- 比单节点更接近生产
-
-这不是完整生产方案，但足够你本地学习：
-
-- 集群启动
-- 分片副本
-- 索引模板
-- alias
-- 查询 DSL
-- 故障恢复
+注意：这只是为了把拓扑跑通。真实生产不要用这么低的配置跑向量检索。
 
 ---
 
-## 二、你的本地虚拟机准备
+## 三、网络与端口规划
 
-实际环境：
+| 端口 | 开放对象 | 用途 | 生产建议 |
+| --- | --- | --- | --- |
+| 9200 | Java 服务、Kibana、运维网段访问 coordinating 节点 | HTTP API | 不对公网开放 |
+| 9300 | ES 节点之间互通 | transport 通信、选主、数据传输 | 只允许 8 个 ES 节点互通 |
+| 5601 | 运维网段访问 es-ops-01 | Kibana | 不对公网开放 |
 
-| 配置 | 实际值 |
-| --- | --- |
-| 宿主机 | Windows 11 Pro, AMD Ryzen |
-| 虚拟化 | VMware Workstation |
-| 虚拟机系统 | CentOS 7 |
-| 磁盘 | 50GB（LVM 已扩容） |
-| Docker | 已安装 |
-| ES 镜像 | docker.elastic.co/elasticsearch/elasticsearch:8.17.0（已拉取） |
+防火墙原则：
 
-推荐最低配置：
+1. Java 服务只能访问 `es-coord-01/02:9200` 或负载均衡地址。
+2. Java 服务不能访问 `es-master-*:9200`。
+3. master、data、coord 节点之间必须互通 9300。
+4. 9200 必须启用账号密码，生产建议启用 HTTPS。
 
-| 配置 | 建议 |
-| --- | --- |
-| CPU | 4 核以上 |
-| 内存 | 6GB 以上（3 节点各 512MB JVM + 系统开销） |
-| 磁盘 | 40GB 以上 |
-| 系统 | CentOS 7+ / Ubuntu 22.04 / Rocky Linux 9 |
-
-如果内存只有 4GB，每节点 JVM 改成 `-Xms256m -Xmx256m`，或者退回到单节点练习。
-
-查看系统：
+示例防火墙规则思路：
 
 ```bash
-uname -a
-cat /etc/os-release
+# 每台 ES 节点允许集群内部 transport 通信
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="10.10.10.0/24" port protocol="tcp" port="9300" accept'
+
+# 只有 coordinating 节点开放 9200 给业务网段
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="10.10.20.0/24" port protocol="tcp" port="9200" accept'
+
+sudo firewall-cmd --reload
+```
+
+---
+
+## 四、系统参数准备
+
+以下操作在 8 台 ES 节点上都要做。
+
+### 4.1 关闭 swap
+
+```bash
+sudo swapoff -a
+sudo sed -i.bak '/ swap / s/^/#/' /etc/fstab
 free -h
-df -h
-docker images | grep elasticsearch
 ```
 
----
-
-## 三、安装 Docker 和 Compose
-
-### 3.1 CentOS 7 安装
+### 4.2 vm.max_map_count
 
 ```bash
-# 卸载旧版 Docker（如果有）
-sudo yum remove -y docker docker-common docker-selinux docker-engine
+sudo tee /etc/sysctl.d/99-elasticsearch.conf > /dev/null <<'EOF'
+vm.max_map_count=262144
+fs.file-max=1048576
+EOF
 
-# 安装依赖
-sudo yum install -y yum-utils device-mapper-persistent-data lvm2
-
-# 添加 Docker 官方仓库
-sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-
-# 安装 Docker CE
-sudo yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# 启动并设为开机自启
-sudo systemctl start docker
-sudo systemctl enable docker
-
-# 让当前用户免 sudo 运行 docker（可选，需重新登录生效）
-sudo usermod -aG docker $USER
-```
-
-验证：
-
-```bash
-docker version
-docker compose version
-```
-
-如果 yum 源慢，可以用阿里云镜像：
-
-```bash
-sudo yum-config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
-```
-
-### 3.2 Ubuntu 安装
-
-```bash
-sudo apt update
-sudo apt install -y ca-certificates curl gnupg
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
-
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-```
-
-验证：
-
-```bash
-docker version
-docker compose version
-```
-
-### 3.3 如果网络慢
-
-你可以使用国内镜像源或手动下载 Docker 安装包。  
-如果是公司网络，先确认能不能访问 Docker Hub。
-
----
-
-## 四、准备目录和系统参数
-
-### 4.1 创建目录
-
-```bash
-sudo mkdir -p /data/es-lab/es01/data
-sudo mkdir -p /data/es-lab/es02/data
-sudo mkdir -p /data/es-lab/es03/data
-sudo mkdir -p /data/es-lab/snapshots
-sudo mkdir -p /data/es-lab/kibana/data
-sudo mkdir -p /opt/es-lab
-```
-
-授权：
-
-```bash
-sudo chmod -R 777 /data/es-lab
-sudo chown -R $USER:$USER /opt/es-lab
-sudo chown -R 1000:1000 /data/es-lab/kibana/data
-```
-
-本地学习用 `777` 图省事，生产不能这么粗暴，要按运行用户精确授权。
-
-### 4.2 设置 vm.max_map_count
-
-ES 需要较大的虚拟内存映射数量：
-
-```bash
-sudo sysctl -w vm.max_map_count=262144
-```
-
-持久化：
-
-```bash
-echo "vm.max_map_count=262144" | sudo tee /etc/sysctl.d/99-elasticsearch.conf
 sudo sysctl --system
-```
-
-验证：
-
-```bash
 sysctl vm.max_map_count
 ```
 
-### 4.3 调整文件句柄
-
-查看：
+### 4.3 文件句柄和进程数
 
 ```bash
-ulimit -n
-```
-
-如果过低，可以临时：
-
-```bash
-ulimit -n 65535
-```
-
-生产上需要配 `/etc/security/limits.conf` 和 systemd 限制。
-
----
-
-## 五、编写 docker-compose.yml
-
-进入工作目录：
-
-```bash
-cd /opt/es-lab
-```
-
-创建 `.env`：
-
-```bash
-cat > .env <<'EOF'
-STACK_VERSION=8.17.0
-CLUSTER_NAME=es-lab
-ES_JAVA_OPTS=-Xms512m -Xmx512m
-ELASTIC_PASSWORD=elastic123
-KIBANA_PASSWORD=kibana123
+sudo tee /etc/security/limits.d/99-elasticsearch.conf > /dev/null <<'EOF'
+elasticsearch soft nofile 65535
+elasticsearch hard nofile 65535
+elasticsearch soft nproc 4096
+elasticsearch hard nproc 4096
+elasticsearch soft memlock unlimited
+elasticsearch hard memlock unlimited
 EOF
 ```
 
-版本号用 8.17.0（和本地已拉取的镜像一致），JVM 每节点 512MB（3 节点合计 1.5GB，给虚拟机系统留足余量）。
+如果用 Docker Compose，每个服务还要配：
 
-创建 `docker-compose.yml`：
+```yaml
+ulimits:
+  memlock:
+    soft: -1
+    hard: -1
+  nofile:
+    soft: 65535
+    hard: 65535
+```
+
+### 4.4 数据目录
+
+每台节点单独准备本机目录，不能多个节点共享同一个数据目录。
 
 ```bash
-cat > docker-compose.yml <<'EOF'
+sudo mkdir -p /data/elasticsearch/data
+sudo mkdir -p /data/elasticsearch/logs
+sudo mkdir -p /data/elasticsearch/certs
+sudo chown -R 1000:1000 /data/elasticsearch
+sudo chmod -R 750 /data/elasticsearch
+```
+
+本地练习为了省事可以 `chmod 777`，但生产不能这么做。
+
+---
+
+## 五、证书与安全策略
+
+生产环境必须开启：
+
+1. `xpack.security.enabled=true`
+2. transport 层 TLS，用于节点间通信。
+3. HTTP 层 TLS，用于业务访问 ES API。
+4. 内置用户或专用业务用户，不要让业务用 `elastic` 超级用户。
+
+### 5.1 生成证书配置
+
+在 `es-ops-01` 上准备 `instances.yml`：
+
+```yaml
+instances:
+  - name: es-master-01
+    dns: ["es-master-01"]
+    ip: ["10.10.10.11"]
+  - name: es-master-02
+    dns: ["es-master-02"]
+    ip: ["10.10.10.12"]
+  - name: es-master-03
+    dns: ["es-master-03"]
+    ip: ["10.10.10.13"]
+  - name: es-data-01
+    dns: ["es-data-01"]
+    ip: ["10.10.10.21"]
+  - name: es-data-02
+    dns: ["es-data-02"]
+    ip: ["10.10.10.22"]
+  - name: es-data-03
+    dns: ["es-data-03"]
+    ip: ["10.10.10.23"]
+  - name: es-coord-01
+    dns: ["es-coord-01"]
+    ip: ["10.10.10.31"]
+  - name: es-coord-02
+    dns: ["es-coord-02"]
+    ip: ["10.10.10.32"]
+```
+
+生成 CA 和节点证书：
+
+```bash
+mkdir -p /opt/es-certs
+cd /opt/es-certs
+
+# 生成 CA
+docker run --rm -v $(pwd):/certs docker.elastic.co/elasticsearch/elasticsearch:8.17.0 \
+  bash -c "elasticsearch-certutil ca --silent --pem -out /certs/ca.zip"
+
+unzip ca.zip
+
+# 生成每个节点的证书
+docker run --rm -v $(pwd):/certs docker.elastic.co/elasticsearch/elasticsearch:8.17.0 \
+  bash -c "elasticsearch-certutil cert --silent --pem --ca-cert /certs/ca/ca.crt --ca-key /certs/ca/ca.key --in /certs/instances.yml -out /certs/certs.zip"
+
+unzip certs.zip
+```
+
+把对应节点证书分发到各节点：
+
+```bash
+scp -r ca es-master-01 es-master-01:/data/elasticsearch/certs/
+scp -r ca es-master-02 es-master-02:/data/elasticsearch/certs/
+scp -r ca es-master-03 es-master-03:/data/elasticsearch/certs/
+scp -r ca es-data-01 es-data-01:/data/elasticsearch/certs/
+scp -r ca es-data-02 es-data-02:/data/elasticsearch/certs/
+scp -r ca es-data-03 es-data-03:/data/elasticsearch/certs/
+scp -r ca es-coord-01 es-coord-01:/data/elasticsearch/certs/
+scp -r ca es-coord-02 es-coord-02:/data/elasticsearch/certs/
+```
+
+每台机器上修权限：
+
+```bash
+sudo chown -R 1000:1000 /data/elasticsearch/certs
+sudo chmod -R 750 /data/elasticsearch/certs
+```
+
+---
+
+## 六、节点配置模板
+
+生产上建议每台服务器一个 ES 进程或一个 ES 容器，不建议一台机器跑多个生产节点。下面用 Docker Compose 表达，真实公司也可以改成 systemd + rpm/tar 包部署。
+
+### 6.1 通用 `.env`
+
+每台 ES 服务器创建 `/opt/elasticsearch/.env`：
+
+```bash
+STACK_VERSION=8.17.0
+CLUSTER_NAME=jeecg-ai-es-prod
+ELASTIC_PASSWORD=请换成强密码
+```
+
+各角色 Heap 单独设置：
+
+```bash
+# master 节点
+ES_JAVA_OPTS=-Xms1g -Xmx1g
+
+# data 节点
+ES_JAVA_OPTS=-Xms16g -Xmx16g
+
+# coordinating 节点
+ES_JAVA_OPTS=-Xms2g -Xmx2g
+```
+
+### 6.2 master 节点 compose 模板
+
+以 `es-master-01` 为例，`/opt/elasticsearch/docker-compose.yml`：
+
+```yaml
 services:
-  es01:
+  elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
-    container_name: es01
+    container_name: es-master-01
+    hostname: es-master-01
+    restart: always
     environment:
-      - node.name=es01
       - cluster.name=${CLUSTER_NAME}
-      - discovery.seed_hosts=es02,es03
-      - cluster.initial_master_nodes=es01,es02,es03
+      - node.name=es-master-01
+      - node.roles=master
+      - network.host=0.0.0.0
+      - discovery.seed_hosts=es-master-01,es-master-02,es-master-03
+      - cluster.initial_master_nodes=es-master-01,es-master-02,es-master-03
       - bootstrap.memory_lock=true
+      - ES_JAVA_OPTS=${ES_JAVA_OPTS}
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
       - xpack.security.enabled=true
       - xpack.security.transport.ssl.enabled=true
       - xpack.security.transport.ssl.verification_mode=certificate
-      - xpack.security.transport.ssl.key=/usr/share/elasticsearch/config/certs/instance/instance.key
-      - xpack.security.transport.ssl.certificate=/usr/share/elasticsearch/config/certs/instance/instance.crt
       - xpack.security.transport.ssl.certificate_authorities=/usr/share/elasticsearch/config/certs/ca/ca.crt
-      - ES_JAVA_OPTS=${ES_JAVA_OPTS}
-      - path.repo=/usr/share/elasticsearch/snapshots
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-      nofile:
-        soft: 65535
-        hard: 65535
+      - xpack.security.transport.ssl.certificate=/usr/share/elasticsearch/config/certs/es-master-01/es-master-01.crt
+      - xpack.security.transport.ssl.key=/usr/share/elasticsearch/config/certs/es-master-01/es-master-01.key
+      - xpack.security.http.ssl.enabled=true
+      - xpack.security.http.ssl.certificate_authorities=/usr/share/elasticsearch/config/certs/ca/ca.crt
+      - xpack.security.http.ssl.certificate=/usr/share/elasticsearch/config/certs/es-master-01/es-master-01.crt
+      - xpack.security.http.ssl.key=/usr/share/elasticsearch/config/certs/es-master-01/es-master-01.key
     volumes:
-      - /data/es-lab/es01/data:/usr/share/elasticsearch/data
-      - /data/es-lab/snapshots:/usr/share/elasticsearch/snapshots
-      - ./certs:/usr/share/elasticsearch/config/certs:ro
+      - /data/elasticsearch/data:/usr/share/elasticsearch/data
+      - /data/elasticsearch/logs:/usr/share/elasticsearch/logs
+      - /data/elasticsearch/certs:/usr/share/elasticsearch/config/certs:ro
     ports:
       - "9200:9200"
-    networks:
-      - es-net
-
-  es02:
-    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
-    container_name: es02
-    environment:
-      - node.name=es02
-      - cluster.name=${CLUSTER_NAME}
-      - discovery.seed_hosts=es01,es03
-      - cluster.initial_master_nodes=es01,es02,es03
-      - bootstrap.memory_lock=true
-      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
-      - xpack.security.enabled=true
-      - xpack.security.transport.ssl.enabled=true
-      - xpack.security.transport.ssl.verification_mode=certificate
-      - xpack.security.transport.ssl.key=/usr/share/elasticsearch/config/certs/instance/instance.key
-      - xpack.security.transport.ssl.certificate=/usr/share/elasticsearch/config/certs/instance/instance.crt
-      - xpack.security.transport.ssl.certificate_authorities=/usr/share/elasticsearch/config/certs/ca/ca.crt
-      - ES_JAVA_OPTS=${ES_JAVA_OPTS}
-      - path.repo=/usr/share/elasticsearch/snapshots
+      - "9300:9300"
     ulimits:
       memlock:
         soft: -1
@@ -317,33 +371,59 @@ services:
       nofile:
         soft: 65535
         hard: 65535
-    volumes:
-      - /data/es-lab/es02/data:/usr/share/elasticsearch/data
-      - /data/es-lab/snapshots:/usr/share/elasticsearch/snapshots
-      - ./certs:/usr/share/elasticsearch/config/certs:ro
-    ports:
-      - "9201:9200"
-    networks:
-      - es-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -k -u elastic:${ELASTIC_PASSWORD} https://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+```
 
-  es03:
+`es-master-02`、`es-master-03` 只改：
+
+1. `container_name`
+2. `hostname`
+3. `node.name`
+4. 证书路径里的节点名
+
+> 重要：`cluster.initial_master_nodes` 只在第一次创建新集群时使用。集群首次启动成功后，生产配置里应移除这一项，避免误引导出新集群。
+
+### 6.3 data 节点 compose 模板
+
+以 `es-data-01` 为例：
+
+```yaml
+services:
+  elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
-    container_name: es03
+    container_name: es-data-01
+    hostname: es-data-01
+    restart: always
     environment:
-      - node.name=es03
       - cluster.name=${CLUSTER_NAME}
-      - discovery.seed_hosts=es01,es02
-      - cluster.initial_master_nodes=es01,es02,es03
+      - node.name=es-data-01
+      - node.roles=data,ingest
+      - network.host=0.0.0.0
+      - discovery.seed_hosts=es-master-01,es-master-02,es-master-03
       - bootstrap.memory_lock=true
+      - ES_JAVA_OPTS=${ES_JAVA_OPTS}
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
       - xpack.security.enabled=true
       - xpack.security.transport.ssl.enabled=true
       - xpack.security.transport.ssl.verification_mode=certificate
-      - xpack.security.transport.ssl.key=/usr/share/elasticsearch/config/certs/instance/instance.key
-      - xpack.security.transport.ssl.certificate=/usr/share/elasticsearch/config/certs/instance/instance.crt
       - xpack.security.transport.ssl.certificate_authorities=/usr/share/elasticsearch/config/certs/ca/ca.crt
-      - ES_JAVA_OPTS=${ES_JAVA_OPTS}
-      - path.repo=/usr/share/elasticsearch/snapshots
+      - xpack.security.transport.ssl.certificate=/usr/share/elasticsearch/config/certs/es-data-01/es-data-01.crt
+      - xpack.security.transport.ssl.key=/usr/share/elasticsearch/config/certs/es-data-01/es-data-01.key
+      - xpack.security.http.ssl.enabled=true
+      - xpack.security.http.ssl.certificate_authorities=/usr/share/elasticsearch/config/certs/ca/ca.crt
+      - xpack.security.http.ssl.certificate=/usr/share/elasticsearch/config/certs/es-data-01/es-data-01.crt
+      - xpack.security.http.ssl.key=/usr/share/elasticsearch/config/certs/es-data-01/es-data-01.key
+    volumes:
+      - /data/elasticsearch/data:/usr/share/elasticsearch/data
+      - /data/elasticsearch/logs:/usr/share/elasticsearch/logs
+      - /data/elasticsearch/certs:/usr/share/elasticsearch/config/certs:ro
+    ports:
+      - "9200:9200"
+      - "9300:9300"
     ulimits:
       memlock:
         soft: -1
@@ -351,274 +431,328 @@ services:
       nofile:
         soft: 65535
         hard: 65535
-    volumes:
-      - /data/es-lab/es03/data:/usr/share/elasticsearch/data
-      - /data/es-lab/snapshots:/usr/share/elasticsearch/snapshots
-      - ./certs:/usr/share/elasticsearch/config/certs:ro
-    ports:
-      - "9202:9200"
-    networks:
-      - es-net
+```
 
-  kibana:
-    image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
-    container_name: kibana
-    depends_on:
-      - es01
+如果你后续要做冷热分层，可以把 data 节点拆成：
+
+```yaml
+node.roles=data_hot,ingest
+```
+
+或者：
+
+```yaml
+node.roles=data_content,ingest
+```
+
+当前 RAG/业务搜索阶段先用 `data,ingest` 更简单，面试也更容易讲清楚。
+
+### 6.4 coordinating-only 节点 compose 模板
+
+以 `es-coord-01` 为例：
+
+```yaml
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    container_name: es-coord-01
+    hostname: es-coord-01
+    restart: always
     environment:
-      - SERVER_NAME=kibana
-      - ELASTICSEARCH_HOSTS=http://es01:9200
-      - ELASTICSEARCH_USERNAME=kibana_system
-      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+      - cluster.name=${CLUSTER_NAME}
+      - node.name=es-coord-01
+      - node.roles=[]
+      - network.host=0.0.0.0
+      - discovery.seed_hosts=es-master-01,es-master-02,es-master-03
+      - bootstrap.memory_lock=true
+      - ES_JAVA_OPTS=${ES_JAVA_OPTS}
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - xpack.security.enabled=true
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.security.transport.ssl.certificate_authorities=/usr/share/elasticsearch/config/certs/ca/ca.crt
+      - xpack.security.transport.ssl.certificate=/usr/share/elasticsearch/config/certs/es-coord-01/es-coord-01.crt
+      - xpack.security.transport.ssl.key=/usr/share/elasticsearch/config/certs/es-coord-01/es-coord-01.key
+      - xpack.security.http.ssl.enabled=true
+      - xpack.security.http.ssl.certificate_authorities=/usr/share/elasticsearch/config/certs/ca/ca.crt
+      - xpack.security.http.ssl.certificate=/usr/share/elasticsearch/config/certs/es-coord-01/es-coord-01.crt
+      - xpack.security.http.ssl.key=/usr/share/elasticsearch/config/certs/es-coord-01/es-coord-01.key
     volumes:
-      - /data/es-lab/kibana/data:/usr/share/kibana/data
+      - /data/elasticsearch/data:/usr/share/elasticsearch/data
+      - /data/elasticsearch/logs:/usr/share/elasticsearch/logs
+      - /data/elasticsearch/certs:/usr/share/elasticsearch/config/certs:ro
     ports:
-      - "5601:5601"
-    networks:
-      - es-net
-
-networks:
-  es-net:
-    driver: bridge
-EOF
+      - "9200:9200"
+      - "9300:9300"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65535
+        hard: 65535
 ```
 
-### 5.1 关键配置说明
-
-| 配置项 | 值 | 为什么 |
-| --- | --- | --- |
-| `xpack.security.enabled` | `true` | 开启认证，Kibana 连接 ES 需要安全凭据 |
-| `xpack.security.transport.ssl` | `true` | 节点间通信加密，ES 8.x 多节点集群强制要求 |
-| `verification_mode` | `certificate` | 只验证证书有效性，不校验主机名（Docker 内部用容器名通信） |
-| `ELASTIC_PASSWORD` | `elastic123` | elastic 超级用户密码，Kibana 和 curl 都用 |
-| `bootstrap.memory_lock` | `true` | 锁住 JVM heap 不被 swap 到磁盘，避免性能抖动 |
-| `ES_JAVA_OPTS` | `-Xms512m -Xmx512m` | 每节点 512MB，3 节点共 1.5GB，虚拟机友好 |
-| `discovery.seed_hosts` | 其他两个节点 | 节点互相发现，组建集群 |
-| `cluster.initial_master_nodes` | 全部三个 | 首次启动时三个节点都有资格当选 master |
-| `path.repo` | snapshots 目录 | 支持快照备份功能 |
-
-生产环境不要照搬实验室配置，至少还要开 HTTPS（HTTP 层 SSL）+ 独立 CA 签发的证书。
-
-### 5.2 Kibana 说明
-
-Kibana 已集成到 docker-compose.yml 中。Kibana 镜像约 1GB，启动后额外占 300~500MB 内存。你的虚拟机 12GB 内存完全扛得住。启动后访问 `http://虚拟机IP:5601`，用 `elastic` / `elastic123` 登录。
+`node.roles=[]` 表示不具备 master/data/ingest 等专用角色，只作为协调节点参与请求转发和结果合并。
 
 ---
 
-## 5.5 生成节点间通信证书
+## 七、按角色启动节点
 
-ES 8.x 开启安全认证后，多节点集群**强制要求**节点间通信使用 SSL 加密。需要在启动前生成 CA 和节点证书：
-
-```bash
-cd /opt/es-lab
-
-# 1. 创建证书目录
-mkdir -p certs
-
-# 2. 生成 CA（直接回车跳过密码保护）
-docker run --rm -v $(pwd)/certs:/certs \
-  docker.elastic.co/elasticsearch/elasticsearch:8.17.0 \
-  bin/elasticsearch-certutil ca --silent --pem -out /certs/elastic-stack-ca.zip
-
-# 3. 解压 CA 证书（下一步要用 CA 签发节点证书，必须先解压）
-unzip -o certs/elastic-stack-ca.zip -d certs/
-
-# 4. 用 CA 生成节点证书（直接回车跳过密码保护）
-docker run --rm -v $(pwd)/certs:/certs \
-  docker.elastic.co/elasticsearch/elasticsearch:8.17.0 \
-  bin/elasticsearch-certutil cert --silent --pem \
-  -ca-cert /certs/ca/ca.crt \
-  -ca-key /certs/ca/ca.key \
-  -out /certs/elastic-certificates.zip
-
-# 5. 解压节点证书
-unzip -o certs/elastic-certificates.zip -d certs/
-```
-
-执行完毕后 `certs/` 目录下应该有这些文件：
-
-```
-certs/
-├── ca/
-│   ├── ca.crt
-│   └── ca.key
-└── instance/
-    ├── instance.crt
-    └── instance.key
-```
-
-> **说明**：这里用的是 PEM 格式的证书，三个节点共用同一套证书。`verification_mode=certificate` 只验证证书有效性，不校验主机名，所以在 Docker 容器间通信没有问题。
-
----
-
-## 六、启动 3 节点 ES + Kibana
-
-> **重要**：如果之前启动失败留下了数据，必须先清理再启动，否则旧数据和新的安全配置冲突：
->
-> ```bash
-> # 停掉所有容器（包括之前跑不起来的）
-> docker compose down
-> # 清理旧数据（首次部署跳过此步）
-> sudo rm -rf /data/es-lab/es01/data/* /data/es-lab/es02/data/* /data/es-lab/es03/data/*
-> ```
-
-启动三个 ES 节点：
-
-```bash
-cd /opt/es-lab
-docker compose up -d es01 es02 es03
-```
-
-等 ES 集群就绪后，设置 Kibana 系统用户密码并启动 Kibana：
-
-```bash
-# 等待约 30 秒，确认 ES 集群已启动
-sleep 30
-
-# 设置 kibana_system 用户密码
-curl -u elastic:elastic123 -X POST \
-  "http://localhost:9200/_security/user/kibana_system/_password" \
-  -H "Content-Type: application/json" \
-  -d '{"password":"kibana123"}'
-
-# 启动 Kibana
-docker compose up -d kibana
-```
-
-三个容器会同时启动，互相发现、选举 master、分配分片。这个过程大约 20~30 秒。
-
-看日志观察集群组建过程：
-
-```bash
-docker logs -f es01
-```
-
-关键日志标志：
+启动顺序建议：
 
 ```text
-# 节点互相发现
-master nodes changed from [], added {[es01], [es02], [es03]}
-# 集群组建完成
-recovered [0] indices into cluster_state
+先启动 3 个 master
+  -> 确认选主成功
+  -> 启动 3 个 data
+  -> 确认 data 加入
+  -> 启动 2 个 coordinating
+  -> 配置负载均衡
+  -> 创建业务用户、索引模板和索引
 ```
 
-看到类似日志说明集群组建成功，`Ctrl+C` 退出日志。
+### 7.1 启动 master
 
-查看所有容器状态：
+在三台 master 上分别执行：
 
 ```bash
-docker compose ps
+cd /opt/elasticsearch
+docker compose up -d
 ```
 
-三个容器应该都是 `running` 状态。
+查看日志：
+
+```bash
+docker logs -f es-master-01
+```
+
+应该能看到类似信息：
+
+```text
+master node changed
+cluster UUID set
+```
+
+### 7.2 移除 initial_master_nodes
+
+首次集群形成后，在 3 个 master 的 compose 配置中移除：
+
+```yaml
+- cluster.initial_master_nodes=es-master-01,es-master-02,es-master-03
+```
+
+然后滚动重启 master，每次只重启一个：
+
+```bash
+docker compose restart elasticsearch
+```
+
+等集群恢复 green 后再重启下一个。
+
+### 7.3 启动 data 和 coordinating
+
+在 data、coord 节点分别执行：
+
+```bash
+cd /opt/elasticsearch
+docker compose up -d
+```
 
 ---
 
-## 七、验证集群状态
+## 八、负载均衡与业务连接
 
-### 7.1 查看基础信息
+### 8.1 Nginx 负载均衡示例
 
-```bash
-curl -u elastic:elastic123 http://localhost:9200?pretty
+在 `es-ops-01` 上部署 Nginx 或使用公司 SLB。Nginx 示例：
+
+```nginx
+upstream es_coord_backend {
+    server 10.10.10.31:9200 max_fails=3 fail_timeout=10s;
+    server 10.10.10.32:9200 max_fails=3 fail_timeout=10s;
+}
+
+server {
+    listen 9200 ssl;
+    server_name es-search.example.com;
+
+    ssl_certificate     /etc/nginx/certs/es-search.crt;
+    ssl_certificate_key /etc/nginx/certs/es-search.key;
+
+    location / {
+        proxy_pass https://es_coord_backend;
+        proxy_ssl_verify off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 60s;
+    }
+}
 ```
 
-返回集群信息，确认 `version.number` 是 `8.17.0`，`cluster_name` 是 `es-lab`。
+生产更推荐使用云厂商内网 SLB 或专业四层/七层负载均衡，并配置健康检查。
 
-### 7.2 查看健康状态
+### 8.2 JeecgBoot / Java 服务连接方式
+
+业务侧只配置负载均衡地址：
+
+```yaml
+practice:
+  vector:
+    es:
+      uris:
+        - https://es-search.example.com:9200
+      username: jeecg_rag
+      password: ${ES_RAG_PASSWORD}
+```
+
+不要配置 master：
+
+```yaml
+# 禁止：业务不连 master
+# https://es-master-01:9200
+# https://es-master-02:9200
+# https://es-master-03:9200
+```
+
+### 8.3 创建最小权限业务用户
+
+不要让业务服务用 `elastic`。创建角色和用户：
 
 ```bash
-curl -u elastic:elastic123 "http://localhost:9200/_cluster/health?pretty"
+curl -k -u elastic:${ELASTIC_PASSWORD} -X POST "https://es-search.example.com:9200/_security/role/jeecg_rag_role" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "cluster": ["monitor"],
+    "indices": [
+      {
+        "names": ["knowledge_chunks*", "product_search*"],
+        "privileges": ["read", "view_index_metadata", "create_index", "write", "manage"]
+      }
+    ]
+  }'
+
+curl -k -u elastic:${ELASTIC_PASSWORD} -X POST "https://es-search.example.com:9200/_security/user/jeecg_rag" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "password": "请换成强密码",
+    "roles": ["jeecg_rag_role"],
+    "full_name": "JeecgBoot RAG Service User"
+  }'
+```
+
+权限可以再收紧：生产里创建索引、模板、查询、写入最好拆成不同账号。
+
+---
+
+## 九、验证集群状态
+
+### 9.1 查看健康状态
+
+```bash
+curl -k -u elastic:${ELASTIC_PASSWORD} "https://es-search.example.com:9200/_cluster/health?pretty"
 ```
 
 期望：
 
 ```json
 {
-  "cluster_name": "es-lab",
+  "cluster_name": "jeecg-ai-es-prod",
   "status": "green",
-  "number_of_nodes": 3
+  "number_of_nodes": 8,
+  "number_of_data_nodes": 3
 }
 ```
 
-`status` 三种值：`green`（一切正常）、`yellow`（主分片正常但副本未完全分配）、`red`（有主分片不可用）。
-
-### 7.3 查看节点
+### 9.2 查看节点角色
 
 ```bash
-curl -u elastic:elastic123 "http://localhost:9200/_cat/nodes?v"
+curl -k -u elastic:${ELASTIC_PASSWORD} "https://es-search.example.com:9200/_cat/nodes?v&h=name,ip,roles,master,heap.percent,ram.percent,cpu,node.role"
 ```
 
-应该看到 es01、es02、es03 三个节点，带 `*` 号的是当前 master。
+你应该看到：
 
-### 7.4 查看分片
+```text
+es-master-01  10.10.10.11  m   *
+es-master-02  10.10.10.12  m   -
+es-master-03  10.10.10.13  m   -
+es-data-01    10.10.10.21  di  -
+es-data-02    10.10.10.22  di  -
+es-data-03    10.10.10.23  di  -
+es-coord-01   10.10.10.31  -   -
+es-coord-02   10.10.10.32  -   -
+```
+
+`roles` 里：
+
+| 标记 | 含义 |
+| --- | --- |
+| `m` | master-eligible |
+| `d` | data |
+| `i` | ingest |
+| `-` | coordinating-only |
+
+### 9.3 查看分片分布
 
 ```bash
-curl -u elastic:elastic123 "http://localhost:9200/_cat/shards?v"
+curl -k -u elastic:${ELASTIC_PASSWORD} "https://es-search.example.com:9200/_cat/shards?v"
+curl -k -u elastic:${ELASTIC_PASSWORD} "https://es-search.example.com:9200/_cat/allocation?v"
 ```
 
-初始没有自定义索引时，只会看到系统索引（`.security` 等）的分片。
+分片应该只落在 `es-data-*`，不应该落在 master 或 coord。
 
 ---
 
-## 八、创建生产风格索引模板和别名
+## 十、索引模板、分片和别名
 
-生产里通常不直接让业务写死具体索引名，而是使用别名。
+### 10.1 分片原则
 
-比如：
+3 个 data 节点下，业务初期推荐：
 
-```text
-product_search_write -> product_search_v1
-product_search_read  -> product_search_v1
-```
+| 场景 | primary shards | replicas | 说明 |
+| --- | --- | --- | --- |
+| 商品/订单搜索 | 3 | 1 | 分散到 3 个 data，容忍 1 台 data 宕机 |
+| RAG chunk 少于百万 | 3 | 1 | 足够演练生产拓扑 |
+| 小索引/配置索引 | 1 | 1 | 避免过度分片 |
+| 日志类时间索引 | 按日/按月评估 | 1 | 配 ILM 或定期归档 |
 
-以后重建索引时：
+分片不是越多越好。分片太多会增加集群状态、文件句柄、查询合并和恢复成本。
 
-```text
-product_search_v2
-切换 alias
-```
-
-业务代码不需要改。
-
-### 8.1 创建索引
+### 10.2 商品索引模板
 
 ```bash
-curl -u elastic:elastic123 \
-  -X PUT "http://localhost:9200/product_search_v1" \
-  -H "Content-Type: application/json" \
+curl -k -u elastic:${ELASTIC_PASSWORD} -X PUT "https://es-search.example.com:9200/_index_template/product_search_template" \
+  -H 'Content-Type: application/json' \
   -d '{
-    "settings": {
-      "number_of_shards": 3,
-      "number_of_replicas": 1,
-      "refresh_interval": "1s"
-    },
-    "mappings": {
-      "properties": {
-        "id": { "type": "keyword" },
-        "title": {
-          "type": "text",
-          "fields": {
-            "keyword": { "type": "keyword" }
-          }
-        },
-        "brand": { "type": "keyword" },
-        "categoryId": { "type": "keyword" },
-        "price": { "type": "integer" },
-        "status": { "type": "keyword" },
-        "createdAt": { "type": "date" }
+    "index_patterns": ["product_search_v*"],
+    "template": {
+      "settings": {
+        "number_of_shards": 3,
+        "number_of_replicas": 1,
+        "refresh_interval": "1s"
+      },
+      "mappings": {
+        "properties": {
+          "id": { "type": "keyword" },
+          "title": { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+          "brand": { "type": "keyword" },
+          "categoryId": { "type": "keyword" },
+          "status": { "type": "keyword" },
+          "price": { "type": "integer" },
+          "createdAt": { "type": "date" }
+        }
       }
     }
   }'
 ```
 
-3 个分片对应 3 个节点，1 个副本保证每个节点上都有备份。
-
-### 8.2 创建读写别名
+创建版本索引和别名：
 
 ```bash
-curl -u elastic:elastic123 \
-  -X POST "http://localhost:9200/_aliases" \
-  -H "Content-Type: application/json" \
+curl -k -u elastic:${ELASTIC_PASSWORD} -X PUT "https://es-search.example.com:9200/product_search_v1"
+
+curl -k -u elastic:${ELASTIC_PASSWORD} -X POST "https://es-search.example.com:9200/_aliases" \
+  -H 'Content-Type: application/json' \
   -d '{
     "actions": [
       { "add": { "index": "product_search_v1", "alias": "product_search_read" } },
@@ -627,483 +761,263 @@ curl -u elastic:elastic123 \
   }'
 ```
 
-查看：
-
-```bash
-curl -u elastic:elastic123 "http://localhost:9200/_cat/aliases?v"
-```
+业务读写都走 alias，不写死 `product_search_v1`。
 
 ---
 
-## 九、写入商品数据并查询
+## 十一、RAG 向量索引方案
 
-### 9.1 单条写入
+### 11.1 RAG chunk 索引
 
-```bash
-curl -u elastic:elastic123 \
-  -X POST "http://localhost:9200/product_search_write/_doc/10001" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "id": "10001",
-    "title": "Java Redis Spring Cloud Elasticsearch 面试手册",
-    "brand": "tech-book",
-    "categoryId": "book",
-    "price": 9900,
-    "status": "ON_SALE",
-    "createdAt": "2026-05-09T10:00:00"
-  }'
-```
-
-### 9.2 批量写入
+以 bge-m3 1024 维向量为例：
 
 ```bash
-cat > products.ndjson <<'EOF'
-{ "index": { "_index": "product_search_write", "_id": "10002" } }
-{ "id": "10002", "title": "Docker Linux 部署实战", "brand": "tech-book", "categoryId": "book", "price": 7900, "status": "ON_SALE", "createdAt": "2026-05-09T11:00:00" }
-{ "index": { "_index": "product_search_write", "_id": "10003" } }
-{ "id": "10003", "title": "RocketMQ 分布式消息系统", "brand": "tech-book", "categoryId": "book", "price": 8900, "status": "ON_SALE", "createdAt": "2026-05-09T12:00:00" }
-EOF
-
-curl -u elastic:elastic123 \
-  -X POST "http://localhost:9200/_bulk" \
-  -H "Content-Type: application/x-ndjson" \
-  --data-binary @products.ndjson
-```
-
-### 9.3 查询
-
-```bash
-curl -u elastic:elastic123 \
-  -X POST "http://localhost:9200/product_search_read/_search?pretty" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": {
-      "bool": {
-        "must": [
-          { "match": { "title": "Java Redis" } }
-        ],
-        "filter": [
-          { "term": { "status": "ON_SALE" } },
-          { "range": { "price": { "gte": 5000, "lte": 12000 } } }
-        ]
-      }
-    },
-    "aggs": {
-      "brand_count": {
-        "terms": { "field": "brand" }
-      }
-    }
-  }'
-```
-
----
-
-## 十、向量搜索索引与 kNN 查询
-
-ES 8.x 支持 dense_vector 字段和 kNN 搜索，可以用于 RAG 场景的向量语义检索。
-
-### 10.1 创建向量索引
-
-```bash
-curl -u elastic:elastic123 \
-  -X PUT "http://localhost:9200/knowledge_chunks" \
-  -H "Content-Type: application/json" \
+curl -k -u elastic:${ELASTIC_PASSWORD} -X PUT "https://es-search.example.com:9200/knowledge_chunks_v1" \
+  -H 'Content-Type: application/json' \
   -d '{
     "settings": {
       "number_of_shards": 3,
-      "number_of_replicas": 1
+      "number_of_replicas": 1,
+      "refresh_interval": "5s"
     },
     "mappings": {
       "properties": {
-        "chunk_id": { "type": "keyword" },
-        "chunk_text": {
-          "type": "text",
-          "analyzer": "ik_max_word",
-          "fields": {
-            "keyword": { "type": "keyword" }
-          }
-        },
-        "chunk_vector": {
+        "id": { "type": "keyword" },
+        "knowledgeBaseId": { "type": "keyword" },
+        "documentId": { "type": "keyword" },
+        "tenantId": { "type": "keyword" },
+        "ownerUserId": { "type": "keyword" },
+        "accessRoleIds": { "type": "keyword" },
+        "sourceFileName": { "type": "keyword" },
+        "chunkText": { "type": "text" },
+        "chunkOrder": { "type": "integer" },
+        "createTime": { "type": "date" },
+        "chunkVector": {
           "type": "dense_vector",
           "dims": 1024,
           "index": true,
           "similarity": "cosine"
-        },
-        "doc_id": { "type": "keyword" },
-        "knowledge_base_id": { "type": "keyword" },
-        "heading_path": { "type": "keyword" },
-        "created_at": { "type": "date" }
+        }
       }
     }
   }'
 ```
 
-关键参数：`dims` 必须和 Embedding 模型输出维度一致（bge-m3 是 1024），`index: true` 启用 HNSW 索引支持 kNN 快速搜索，`similarity: cosine` 用余弦相似度衡量语义距离。
-
-### 10.2 写入带向量的文档
-
-实际场景中向量由 Embedding API 生成，这里用模拟数据演示写入格式：
+创建别名：
 
 ```bash
-curl -u elastic:elastic123 \
-  -X POST "http://localhost:9200/knowledge_chunks/_doc/chunk_001" \
-  -H "Content-Type: application/json" \
+curl -k -u elastic:${ELASTIC_PASSWORD} -X POST "https://es-search.example.com:9200/_aliases" \
+  -H 'Content-Type: application/json' \
   -d '{
-    "chunk_id": "chunk_001",
-    "chunk_text": "Redis 的 RDB 持久化会在指定时间间隔将内存数据快照写入磁盘",
-    "chunk_vector": [0.012, -0.034, 0.056],
-    "doc_id": "doc_redis_01",
-    "knowledge_base_id": "kb_001",
-    "heading_path": "Redis > 持久化 > RDB",
-    "created_at": "2026-06-16T10:00:00"
+    "actions": [
+      { "add": { "index": "knowledge_chunks_v1", "alias": "knowledge_chunks_read" } },
+      { "add": { "index": "knowledge_chunks_v1", "alias": "knowledge_chunks_write", "is_write_index": true } }
+    ]
   }'
 ```
 
-注意：这里 `chunk_vector` 只写了 3 个维度做演示，实际必须写满 1024 个维度，否则写入报错。
+### 11.2 RAG 查询必须带权限过滤
 
-### 10.3 kNN 向量搜索
+生产 RAG 查询不能只做向量相似度，必须把租户、知识库、角色权限一起带进 filter：
 
-```bash
-curl -u elastic:elastic123 \
-  -X POST "http://localhost:9200/knowledge_chunks/_search?pretty" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "knn": {
-      "field": "chunk_vector",
-      "query_vector": [0.010, -0.030, 0.050],
-      "k": 5,
-      "num_candidates": 50
-    }
-  }'
-```
-
-`query_vector` 是用户问题经 Embedding 模型生成的向量，`k` 是返回最相似的 topK 文档数，`num_candidates` 是每个分片采集的候选数（一般设 k 的 5~10 倍）。
-
-### 10.4 混合搜索（向量 + 关键词 + 过滤）
-
-生产里通常把 kNN 和传统 query 组合使用：
-
-```bash
-curl -u elastic:elastic123 \
-  -X POST "http://localhost:9200/knowledge_chunks/_search?pretty" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "knn": {
-      "field": "chunk_vector",
-      "query_vector": [0.010, -0.030, 0.050],
-      "k": 5,
-      "num_candidates": 50,
-      "filter": { "term": { "knowledge_base_id": "kb_001" } }
-    },
-    "query": {
+```json
+{
+  "knn": {
+    "field": "chunkVector",
+    "query_vector": [0.012, -0.034],
+    "k": 5,
+    "num_candidates": 50,
+    "filter": {
       "bool": {
-        "must": [
-          { "match": { "chunk_text": "Redis 持久化" } }
+        "filter": [
+          { "term": { "tenantId": "tenant_001" } },
+          { "term": { "knowledgeBaseId": "kb_001" } },
+          { "terms": { "accessRoleIds": ["role_admin", "role_rag_user"] } }
         ]
       }
-    },
-    "size": 10
-  }'
-```
-
-ES 会同时执行 kNN 和 bool query，结果通过 RRF（Reciprocal Rank Fusion）合并排序。关键词命中的和语义相关的文档都能被召回。
-
----
-
-## 十一、模拟 MySQL 到 ES 的同步链路
-
-真实生产里，通常不是用户请求直接手写 ES，而是：
-
-```text
-MySQL 商品表
-  -> Binlog / MQ / 定时任务
-  -> 构建搜索文档
-  -> 写入 ES
-```
-
-### 10.1 为什么不直接拿 ES 当主库
-
-因为 ES 不适合作为强事务事实库。  
-正确姿势：
-
-- MySQL 保存事实数据
-- ES 保存查询视图
-
-### 10.2 同步失败怎么处理
-
-需要：
-
-1. 重试队列
-2. 死信记录
-3. 定时对账
-4. 手动重建索引能力
-
-### 10.3 Java 同步伪代码
-
-```java
-@Component
-public class ProductSearchSyncConsumer {
-
-    private final ProductMapper productMapper;
-    private final ElasticsearchClient elasticsearchClient;
-
-    public void onProductChanged(ProductChangedEvent event) {
-        Product product = productMapper.selectById(event.productId());
-        ProductSearchDocument doc = ProductSearchDocument.from(product);
-
-        elasticsearchClient.index(i -> i
-                .index("product_search_write")
-                .id(doc.id())
-                .document(doc)
-        );
     }
+  }
 }
 ```
 
----
+如果当前用户没有任何可访问知识库，后端应该直接拒绝或返回空结果，禁止降级成“搜索全部知识库”。
 
-## 十二、Kibana 基础使用（可选）
+### 11.3 向量检索容量注意点
 
-如果需要可视化界面，可以在 docker-compose.yml 里加一个 Kibana 服务：
-
-```yaml
-  kibana:
-    image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
-    container_name: kibana
-    depends_on:
-      - es01
-    environment:
-      - SERVER_NAME=kibana
-      - ELASTICSEARCH_HOSTS=http://es01:9200
-    volumes:
-      - /data/es-lab/kibana/data:/usr/share/kibana/data
-    ports:
-      - "5601:5601"
-    networks:
-      - es-net
-```
-
-然后在 `.env` 里加 `KIBANA_PASSWORD` 并设置密码（开启安全认证时）。Kibana 的密码设置和启动已在第六节完成（ES 集群启动后统一操作），这里不再重复。
-
-> **说明**：`kibana_system` 是 ES 内置的服务账号，专门给 Kibana 连接 ES 使用，权限有限，不能用于其他 API 操作。密码需要和 `.env` 里的 `KIBANA_PASSWORD` 保持一致。
-
-访问 `http://虚拟机IP:5601`，用 `elastic` / `elastic123` 登录，常用功能：
-
-- Dev Tools：执行 DSL 查询
-- Stack Management：看索引、分片、快照
-- Discover：浏览和检索数据
+1. HNSW 向量索引会占用明显的堆外和文件系统缓存。
+2. `num_candidates` 越大，召回越稳，但延迟越高。
+3. RAG 查询建议先记录 `topK`、`num_candidates`、耗时、召回命中文档和 token 成本。
+4. 向量索引不要频繁更新单条文档，大批量导入时可以临时调大 `refresh_interval`。
+5. 如果 chunk 数量很小，不要为了“看起来生产”把 shard 开太多。
 
 ---
 
-## 十三、快照备份与恢复演练
+## 十二、备份、监控和日志
 
-### 13.1 注册快照仓库
+### 12.1 快照仓库
+
+生产不要只依赖副本。副本解决节点故障，快照解决误删、误改、集群级故障和灾备。
+
+建议使用对象存储或 NFS 快照仓库。示例：
 
 ```bash
-curl -u elastic:elastic123 \
-  -X PUT "http://localhost:9200/_snapshot/local_backup" \
-  -H "Content-Type: application/json" \
+curl -k -u elastic:${ELASTIC_PASSWORD} -X PUT "https://es-search.example.com:9200/_snapshot/es_prod_backup" \
+  -H 'Content-Type: application/json' \
   -d '{
     "type": "fs",
     "settings": {
-      "location": "/usr/share/elasticsearch/snapshots"
+      "location": "/mnt/es_snapshots",
+      "compress": true
     }
   }'
 ```
 
-### 13.2 创建快照
+创建快照：
 
 ```bash
-curl -u elastic:elastic123 \
-  -X PUT "http://localhost:9200/_snapshot/local_backup/snapshot_001?wait_for_completion=true"
+curl -k -u elastic:${ELASTIC_PASSWORD} -X PUT "https://es-search.example.com:9200/_snapshot/es_prod_backup/snapshot_20260709?wait_for_completion=true"
 ```
 
-### 13.3 查看快照
+### 12.2 监控指标
+
+必须看这些指标：
+
+| 类别 | 指标 |
+| --- | --- |
+| 集群 | health、节点数、master 是否稳定、pending tasks |
+| 分片 | unassigned shards、relocating shards、shard size |
+| JVM | heap used、GC 次数和耗时、old GC |
+| 查询 | search latency、fetch latency、slowlog |
+| 写入 | indexing rate、refresh、merge、flush |
+| 磁盘 | disk used、watermark、IO wait |
+| 线程池 | search/write queue、rejected |
+| RAG | kNN 耗时、num_candidates、topK 命中率、拒答率 |
+
+常用排查命令：
 
 ```bash
-curl -u elastic:elastic123 \
-  "http://localhost:9200/_snapshot/local_backup/_all?pretty"
+curl -k -u elastic:${ELASTIC_PASSWORD} "https://es-search.example.com:9200/_cat/health?v"
+curl -k -u elastic:${ELASTIC_PASSWORD} "https://es-search.example.com:9200/_cat/nodes?v"
+curl -k -u elastic:${ELASTIC_PASSWORD} "https://es-search.example.com:9200/_cat/shards?v"
+curl -k -u elastic:${ELASTIC_PASSWORD} "https://es-search.example.com:9200/_cluster/pending_tasks?pretty"
+curl -k -u elastic:${ELASTIC_PASSWORD} "https://es-search.example.com:9200/_cluster/allocation/explain?pretty"
 ```
 
-### 13.4 恢复思路
+### 12.3 慢查询日志
 
-如果要恢复某个索引：
-
-1. 关闭或删除目标索引。
-2. 调 restore API。
-3. 检查集群 health。
-4. 检查别名和数据。
-
-本地演练恢复前要小心，不要误删你还要用的数据。
-
----
-
-## 十四、故障演练
-
-### 14.1 停掉一个节点
+对关键索引开启慢查询日志：
 
 ```bash
-docker stop es02
-```
-
-观察集群变化：
-
-```bash
-curl -u elastic:elastic123 "http://localhost:9200/_cluster/health?pretty"
-curl -u elastic:elastic123 "http://localhost:9200/_cat/nodes?v"
-curl -u elastic:elastic123 "http://localhost:9200/_cat/shards?v"
-```
-
-你应该看到：
-
-- 节点数从 3 变成 2
-- 状态可能短暂变 yellow（副本未完全分配）
-- 如果副本足够，主分片仍可用
-
-恢复：
-
-```bash
-docker start es02
-```
-
-等 10~20 秒后集群会自动恢复到 green。
-
-### 14.2 模拟磁盘压力
-
-查看磁盘：
-
-```bash
-df -h
-du -sh /data/es-lab/*
-```
-
-ES 对磁盘水位很敏感，磁盘使用率超过 85% 会停止分配新分片，超过 95% 会变为只读。
-
-### 14.3 模拟深分页查询
-
-```bash
-curl -u elastic:elastic123 \
-  -X POST "http://localhost:9200/product_search_read/_search?pretty" \
-  -H "Content-Type: application/json" \
+curl -k -u elastic:${ELASTIC_PASSWORD} -X PUT "https://es-search.example.com:9200/knowledge_chunks_v1/_settings" \
+  -H 'Content-Type: application/json' \
   -d '{
-    "from": 10000,
-    "size": 20,
-    "query": { "match_all": {} }
+    "index.search.slowlog.threshold.query.warn": "2s",
+    "index.search.slowlog.threshold.query.info": "1s",
+    "index.search.slowlog.threshold.fetch.warn": "1s",
+    "index.indexing.slowlog.threshold.index.warn": "1s"
   }'
 ```
 
-数据少不一定慢，但生产里深分页会让每个分片取大量候选数据再合并。
+---
+
+## 十三、故障演练
+
+### 13.1 停一个 master
+
+```bash
+ssh es-master-01 "cd /opt/elasticsearch && docker compose stop elasticsearch"
+```
+
+预期：
+
+1. 集群仍可用。
+2. 3 个 master 少 1 个，剩余 2 个仍满足多数派。
+3. `_cat/nodes` 里 `*` 会落到另一个 master。
+4. 查询和写入不应该受明显影响。
+
+验证：
+
+```bash
+curl -k -u elastic:${ELASTIC_PASSWORD} "https://es-search.example.com:9200/_cat/nodes?v&h=name,roles,master"
+curl -k -u elastic:${ELASTIC_PASSWORD} "https://es-search.example.com:9200/_cluster/health?pretty"
+```
+
+### 13.2 停一个 data
+
+```bash
+ssh es-data-02 "cd /opt/elasticsearch && docker compose stop elasticsearch"
+```
+
+预期：
+
+1. 集群可能短暂 yellow，分片重分配后恢复 green。
+2. 只要 `number_of_replicas=1` 且剩余 data 磁盘够用，单 data 故障可恢复。
+3. 查询会有一定抖动，业务应有超时和重试策略。
+
+验证：
+
+```bash
+curl -k -u elastic:${ELASTIC_PASSWORD} "https://es-search.example.com:9200/_cat/shards?v"
+curl -k -u elastic:${ELASTIC_PASSWORD} "https://es-search.example.com:9200/_cat/recovery?v"
+```
+
+### 13.3 停一个 coordinating
+
+```bash
+ssh es-coord-01 "cd /opt/elasticsearch && docker compose stop elasticsearch"
+```
+
+预期：
+
+1. LB 健康检查摘除 `es-coord-01`。
+2. 业务请求切到 `es-coord-02`。
+3. master/data 不受影响。
+
+### 13.4 不要做的故障演练
+
+不要在生产直接同时停两个 master。3 master 只能容忍 1 个 master 故障，同时丢 2 个 master 会失去多数派，集群无法完成选主。
 
 ---
 
-## 十五、常见问题排查
+## 十四、生产禁忌清单
 
-### 15.1 启动报 vm.max_map_count 太低
-
-处理：
-
-```bash
-sudo sysctl -w vm.max_map_count=262144
-echo "vm.max_map_count=262144" | sudo tee /etc/sysctl.d/99-elasticsearch.conf
-sudo sysctl --system
-```
-
-### 15.2 集群 yellow
-
-常见原因：
-
-- 副本无法分配（节点数少于副本数 + 1）
-- 磁盘水位限制
-- 节点正在恢复中
-
-查看分配原因：
-
-```bash
-curl -u elastic:elastic123 "http://localhost:9200/_cluster/allocation/explain?pretty"
-```
-
-### 15.3 容器启动失败
-
-查日志：
-
-```bash
-docker logs es01
-docker inspect es01
-```
-
-常见原因：
-
-- 数据目录权限不对（需要 777 或匹配 ES 运行用户）
-- 内存不足（JVM 申请不到指定大小）
-- vm.max_map_count 太低
-- 端口被占用（`netstat -tlnp | grep 9200`）
-- 旧数据目录残留导致节点 ID 冲突（清理 `/data/es-lab/es0X/data` 重来）
-
-### 15.4 Java 连接 ES 失败
-
-确认：
-
-1. ES 端口是否通：`curl http://虚拟机IP:9200`
-2. 防火墙是否放行：`firewall-cmd --list-ports`
-3. 客户端版本是否兼容 ES 8.x
-4. 如果开了安全认证，确认用户名密码和 HTTPS 配置
-
-### 15.5 内存不足导致节点 OOM
-
-3 节点各 512MB JVM 共 1.5GB，加上系统开销和堆外内存（HNSW 向量索引），虚拟机至少需要 4GB 内存。如果 OOM：
-
-```bash
-# 查看容器内存使用
-docker stats --no-stream
-
-# 降低每节点 JVM（编辑 .env 后 docker compose down && docker compose up -d）
-ES_JAVA_OPTS=-Xms256m -Xmx256m
-```
+1. 不要让业务服务连接 master 节点。
+2. 不要把 3 master + 3 data 全跑在同一台物理机上冒充生产。
+3. 不要多个 ES 节点共享同一个 data 目录。
+4. 不要关闭安全认证暴露 9200。
+5. 不要让业务使用 `elastic` 超级用户。
+6. 不要长期保留 `cluster.initial_master_nodes`。
+7. 不要一开始就建几十个分片。
+8. 不要忽略磁盘水位，磁盘高水位会导致分片无法分配。
+9. 不要只配副本不做快照。
+10. 不要在没有评测数据的情况下盲目调大 `topK` 和 `num_candidates`。
+11. 不要把 RAG 权限只放在 Java 层，ES filter 也必须带租户和权限条件。
+12. 不要把 master、data、coord 的 JVM Heap 配成一样。
 
 ---
 
-## 十六、面试怎么讲这套部署
+## 十五、面试和项目答辩话术
 
-你可以这样表达：
+### 15.1 怎么介绍这套 ES 生产架构
 
-> 我在本地 CentOS 7 虚拟机上用 Docker Compose 模拟过一个三节点 Elasticsearch 8.17 集群。部署前需要调整 `vm.max_map_count`、文件句柄和数据目录权限。每个节点 JVM 512MB，3 个 master/data 节点互相选举。索引层面用具体版本索引加读写别名，比如 `product_search_v1` 配 `product_search_read/write` alias，重建索引时可以平滑切换。同时用 dense_vector 字段和 kNN 搜索做 RAG 向量检索，HNSW 索引支持毫秒级近似最近邻查询。数据同步上 MySQL 作为事实库，ES 作为搜索视图，通过 MQ 或 binlog 做最终一致。排查方面会看 cluster health、cat nodes、cat shards、allocation explain、慢查询和磁盘水位。
+> 我把 ES 集群按生产角色拆成 3 个 dedicated master、3 个 data 和 2 个 coordinating-only 节点。master 只负责选主、集群元数据和分片分配，不承担读写流量；data 节点负责索引、搜索、聚合和 RAG 向量检索；业务服务不直连 master/data，而是通过负载均衡访问两个 coordinating 节点。这样可以避免查询和向量检索压力影响 master 稳定性，也方便后续 data 节点扩容。
 
-高频追问：
+### 15.2 为什么 master 要 3 个
 
-### 16.1 为什么要 3 节点
+> ES 的 master 需要多数派选举。3 个 master 可以容忍 1 个 master 宕机，剩下 2 个仍然能选主。如果只有 2 个 master，任意一个挂掉就可能无法满足多数派；如果 4 个 master，多数派是 3，容错能力不如 3 个直观。所以 dedicated master 通常用 3 个。
 
-> 3 节点能模拟 master 选举和副本恢复，能演练节点宕机后集群自动恢复，单节点只能练 API 不能理解高可用。
+### 15.3 为什么要 coordinating 节点
 
-### 16.2 为什么要别名
+> coordinating 节点本身不存数据，也不参与选主。它接收业务请求，把查询分发到相关 data shard，再合并排序结果返回。对 Java 服务来说，它提供了稳定入口；对 data 节点来说，它减少了 HTTP 入口和结果合并压力。生产上通常配两个 coordinating 节点挂在 LB 后面，保证入口高可用。
 
-> 别名把业务访问名和真实索引版本解耦，重建索引时新建 v2，数据同步完成后切换 alias，业务代码不需要改。
+### 15.4 RAG 向量索引怎么落在这套架构上
 
-### 16.3 为什么 ES 做向量搜索而不是专用向量库
+> RAG 的 chunk 和 dense_vector 存在 data 节点上，索引设置一般按 data 节点数做 3 个 primary shard、1 个 replica。查询时 Java 服务先把问题向量化，然后通过 coordinating 节点发起 kNN 查询，ES 在 data 节点上执行 HNSW 近似搜索，再由 coordinating 节点合并 topK 结果。生产查询必须带 tenantId、knowledgeBaseId、roleIds 等 filter，防止越权召回。
 
-> 知识库规模在百万级以内，ES 向量检索性能和专用库无差距，而且天然支持混合搜索（向量 + 关键词 + 过滤），团队已有 ES 运维经验，不需要额外引入中间件。
+### 15.5 如果一个节点挂了怎么办
 
-### 16.4 HNSW 索引是什么
+> 一个 master 挂了，剩下两个 master 仍能形成多数派，集群继续可用。一个 data 挂了，primary/replica 会在剩余 data 节点上恢复，期间可能短暂 yellow。一个 coordinating 挂了，LB 会把流量切到另一个 coordinating。真正要警惕的是同时丢两个 master、磁盘水位过高、分片无法分配和 JVM/GC 压力。
 
-> HNSW 是分层图索引，高层稀疏做粗定位，低层密集做精确搜索，查询从最高层贪心搜索逐层下降，时间复杂度接近 O(logN)。
+### 15.6 这套方案和本地 3 节点 demo 的区别
 
-### 16.5 ES 部署最容易出什么问题
-
-> 本地最常见是 vm.max_map_count 不足、目录权限、内存不够、端口被占用、旧数据残留导致节点 ID 冲突。生产还要关注磁盘水位、分片数量、JVM heap 压力和向量索引的堆外内存开销。
-
----
-
-## 最后建议
-
-你按这份文档实操时，建议不要跳步骤：
-
-```text
-先起集群
-  -> 再看 health/nodes/shards
-  -> 再建索引和别名
-  -> 再写入查询
-  -> 再建向量索引试 kNN
-  -> 再做快照
-  -> 最后停节点做故障演练
-```
-
-这样你不是只会”装 ES”，而是真正把大项目里 ES 的部署、传统搜索、向量检索和治理链路跑了一遍。
+> 3 节点 demo 通常每个节点都是 master+data，能练 API、分片和副本，但不够生产。真实生产要做角色隔离，master 不承担读写，data 专注存储和检索，业务走 coordinating/LB；同时要开启 TLS、安全用户、快照、监控、慢查询、故障演练和容量规划。这才是从“能跑”到“能上线”的差距。
