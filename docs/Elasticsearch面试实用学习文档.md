@@ -1586,23 +1586,45 @@ GET /_tasks
 
 ## 十、高级用法与工程场景
 
-### 10.1 MySQL 同步 ES
+### 10.1 MySQL 同步 ES 最佳实践（Canal + MQ + Java 消费）
 
-常见方式：
+在工程实践中，为了兼顾 MySQL 的事务强一致性与 ES 的高效搜索性能，业内最常用的同步方案是 **基于 CDC (Change Data Capture) 的 Binlog 订阅 + 消息队列异步写入**。该方案能够实现零侵入、高可用与强一致性容错。
 
-| 方式 | 优点 | 缺点 |
-| --- | --- | --- |
-| **业务双写** | 简单直接 | 代码侵入性强，一致性难保证 |
-| **MQ 异步同步** | 解耦，不影响主流程 | 需要处理消费失败和重试 |
-| **Binlog 订阅**（Canal/Debezium） | 零代码侵入，可靠性高 | 需要额外部署 Binlog 采集组件 |
+#### 10.1.1 架构设计
 
-更推荐：
+```text
+MySQL (业务写库)
+  │ (写事务提交，记录 Binlog)
+  ▼
+Canal / Debezium (伪装成 MySQL Slave 订阅)
+  │ (解析 Binlog 得到行级变更)
+  ▼
+消息队列 (RocketMQ / Kafka)
+  │ (按表主键哈希路由消息，保证顺序性)
+  ▼
+Java 消费服务 (Spring Boot Consumer)
+  │ (批量聚合 Bulk 写入，捕获失败重试)
+  ▼
+Elasticsearch 集群 (读视图/搜索引擎)
+```
 
-- MySQL 做事实源。
-- ES 做查询视图。
-- 通过消息或 binlog 保证最终一致。
-- 消费失败要有重试队列和补偿任务。
-- 定期对账（MySQL 数据总量 vs ES 数据总量）。
+#### 10.1.2 工作原理与核心要点
+
+1. **CDC 监听与 Binlog 解析**：
+   Canal 伪装成 MySQL 的 Slave 节点，向 MySQL Master 发送 `dump` 协议请求。MySQL Master 收到请求后，将增量 Binlog（必须设置为 `ROW` 格式）推送给 Canal。Canal 解析出发生变化的数据行，识别出变更类型（`INSERT` / `UPDATE` / `DELETE`）及字段值。
+2. **消息队列（MQ）削峰与解耦**：
+   Canal 将解析出的数据格式化为 JSON 消息发送到消息队列（如 RocketMQ 或 Kafka）。
+   * **顺序保障**：为了防止更新乱序（例如同一条数据的 UPDATE 消息比 INSERT 消息先消费），必须根据数据的主键 ID（如 `productId`）进行 Partition 哈希路由，确保同一主键的数据变更全部发送到同一个 MQ 分区/队列中，由单个消费者线程按顺序消费。
+3. **消费者批量写入（Bulk API）与容错**：
+   Spring Boot Consumer 订阅 MQ。为了避免高频单行写入 ES 造成磁盘 I/O 满载，消费者在内存中进行微批聚合（每 500 毫秒或每 1000 条数据聚合为一批），随后调用 ES `Bulk API` 进行批量写入。
+   * **重试与死信队列（DLQ）**：如果 ES 由于负载过高返回 `429 Too Many Requests` 或网络发生瞬时抖动，消费者捕获异常并执行**指数退避重试**。如果重试 5 次依然失败，为了不阻塞后续消息消费，该消息将被投递至**死信队列（DLQ）**并触发邮件告警，由人工或定时脚本重新读取进行补偿更新。
+4. **定期数据对账（最终一致性兜底）**：
+   虽然 CDC + MQ 保证了最终一致性，但在主备切换、MQ 重试丢消息等极端边缘场景下，仍有丢数据的风险。
+   * **对账设计**：企业中通常会部署一个深夜运行的定时任务（如 XXL-JOB 触发），抽取 MySQL 过去一天的增量更新主键，与 ES 进行双向对账。如果发现 ES 缺失文档或版本号滞后，则直接从 MySQL 读取最新主数据覆盖更新 ES。
+
+#### 10.1.3 方案优点
+* **零侵入**：业务层只负责对 MySQL 进行增删改，不需要编写任何同步 ES 的代码。
+* **高可用与解耦**：当 ES 发生瞬时挂机或熔断时，消息会积压在 MQ 中，不影响主库的正常写入；ES 恢复后，Consumer 会自动消费追平数据。
 
 ### 10.2 索引别名与零停机重建
 
@@ -1704,112 +1726,195 @@ Pipeline 由 Ingest 节点执行，不占用 Data 节点资源。
 
 ---
 
-## 十一、常见线上问题与排查
+## 十一、常见线上问题与排查（真实生产事故演练与处理步骤）
 
-### 11.1 集群 Yellow / Red
+本章以真实的生产事故场景为主线，一步步讲解诊断命令和具体的解决方案。
 
-**Yellow 排查思路**：
+### 11.1 事故一：集群状态突然变红（Red）或变黄（Yellow）
 
-```bash
-# 第一步：看哪些分片未分配
-GET /_cat/shards?v&h=index,shard,prirep,state,unassigned.reason&s=state:asc
+#### 11.1.1 场景模拟
+线上监控告警：ES 集群状态由 Green 变为 Red，业务系统开始出现大面积读取超时或报错。
 
-# 第二步：查看未分配原因
-GET /_cluster/allocation/explain
-```
+#### 11.1.2 排查与解决步骤
 
-常见原因及解决：
+* **第一步：获取当前集群健康度概览**
+  运行以下命令查看哪些指标异常：
+  ```bash
+  GET /_cluster/health?pretty
+  ```
+  **诊断要点**：
+  * 若 `status` 为 `yellow`，说明所有主分片（Primary Shards）正常，但有部分副本分片（Replica Shards）未分配。
+  * 若 `status` 为 `red`，说明至少有一个主分片未分配，数据面临丢失风险。
 
-| 原因 | 解决 |
-| --- | --- |
-| 副本数 > 可用数据节点数 | 减少副本数或增加节点 |
-| 节点磁盘超过 85% 水位 | 清理磁盘或增加节点 |
-| 节点刚重启，副本恢复中 | 等待恢复完成 |
-| 分片分配被手动禁用 | 恢复分配设置 |
+* **第二步：定位受影响的索引**
+  查看具体是哪一个索引出了问题：
+  ```bash
+  GET /_cat/indices?v&s=health:desc
+  ```
+  找到状态为 `red` 或 `yellow` 的索引名称（例如 `knowledge_chunks_v1`）。
 
-**Red 排查思路**：
+* **第三步：查找未分配的故障分片**
+  定位是该索引的哪一个分片（Shard）没有正常启动：
+  ```bash
+  GET /_cat/shards?v&h=index,shard,prirep,state,node,unassigned.reason&s=state:asc
+  ```
+  **典型输出**：
+  `knowledge_chunks_v1 | 2 | p | UNASSIGNED | | NODE_LEFT`
+  （说明 2 号主分片由于某个节点离线，处于未分配状态）。
 
-```bash
-# 看哪些主分片未分配
-GET /_cat/shards?v&h=index,shard,prirep,state&s=state:asc
+* **第四步：诊断未分配的底层根本原因**
+  这是 ES 诊断的“终极武器”命令：
+  ```bash
+  GET /_cluster/allocation/explain
+  {
+    "index": "knowledge_chunks_v1",
+    "shard": 2,
+    "primary": true
+  }
+  ```
+  **ES 会在返回的 `explanation` 中直接给出无法分配的原因**：
+  * **原因 A：`node_left`（节点宕机）**
+    * *解决*：去对应 IP 的物理机查看 ES 进程或 Docker 容器是否因为 OOM 被杀，重新启动该节点。
+  * **原因 B：`the shard cannot be allocated because the disk watermark was exceeded`（磁盘空间超出高水位线）**
+    * *解决*：清理该节点磁盘，或者通过以下 API 临时调大水位线：
+      ```json
+      PUT /_cluster/settings
+      {
+        "persistent": {
+          "cluster.routing.allocation.disk.watermark.low": "85%",
+          "cluster.routing.allocation.disk.watermark.high": "90%",
+          "cluster.routing.allocation.disk.watermark.flood_stage": "95%"
+        }
+      }
+      ```
+  * **原因 C：`the replica cannot be allocated on the same node as the primary`（节点太少，副本分片无处容身）**
+    * *解决*：如果集群只有一个 Node，副本数必须设为 0；如果是多节点，确保副本分片被路由到其他物理机。
 
-# 尝试重新路由
-POST /_cluster/reroute?retry_failed=true
-```
+* **第五步：强制手动触发分片重分配**
+  在节点重启或清理完磁盘后，如果分片仍未自动恢复，执行：
+  ```bash
+  POST /_cluster/reroute?retry_failed=true
+  ```
 
-Red 通常意味着数据丢失风险，需要优先处理。
+---
 
-### 11.2 写入慢
+### 11.2 事故二：写入响应变慢，写入被频繁拒绝（Reject，HTTP 429）
 
-排查方向：
+#### 11.2.1 场景模拟
+在大批量写入数据（如知识库批量同步或促销导入）时，Java 客户端疯狂报错：`ElasticsearchException[Elasticsearch exception [type=es_rejected_execution_exception...]]`。
 
-| 排查项 | 怎么查 | 怎么解决 |
-| --- | --- | --- |
-| Refresh Interval 太短 | 查看 Index Settings | 调大到 30s 甚至更长 |
-| Bulk Size 不合理 | 查看写入日志 | 每批 5~15MB，500~1000 条 |
-| 磁盘 IO 高 | `iostat -x 1`（Linux） | 换 SSD，减少副本数 |
-| 副本数过多 | 查看 Index Settings | 减少副本 |
-| 热点分片 | 查看 Node 负载是否不均 | 调整 Routing 或增加分片 |
-| Translog 刷盘太频繁 | 查看 Translog 配置 | 异步刷盘 `async`（接受风险） |
+#### 11.2.2 排查与解决步骤
 
-### 11.3 查询慢
+* **第一步：排查线程池队列状况**
+  检查各节点的写入线程池是否爆满：
+  ```bash
+  GET /_cat/thread_pool/write?v&h=node_name,active,queue,rejected
+  ```
+  **诊断要点**：
+  * 若 `queue` 达到上限（默认 10000），且 `rejected` 持续增长，说明写入请求速度远远超过了 Data 节点的处理能力。
 
-排查方向：
+* **第二步：分析系统资源瓶颈**
+  在故障物理机上运行系统监控命令：
+  * 运行 `top`：检查 CPU 使用率。如果接近 100% 且 GC 线程占满 CPU，说明正在进行剧烈的垃圾回收或计算。
+  * 运行 `iostat -x 1`：检查磁盘 `%util` 是否达到 100%。如果 I/O 堵死，说明机械硬盘或云盘吞吐达到极限。
 
-| 排查项 | 怎么查 | 怎么解决 |
-| --- | --- | --- |
-| 深分页 | 查看慢日志 | 用 `search_after` |
-| 大范围扫描 | Profile API 分析查询计划 | 加过滤条件缩小范围 |
-| 脚本查询 | 查看 Query DSL | 避免 Script Query/Sort |
-| 高基数聚合 | 查看聚合配置 | 用 `composite` 聚合分页 |
-| 分片太多 | `_cat/shards` | 合并小 Index |
-| 没有走 Filter Cache | 查看 Query DSL | 过滤条件放 `filter` |
-| 前缀通配 | 查看 Query DSL | 避免 `*xxx`，改用 Edge N-gram |
+* **第三步：采取应急降载与调优措施**
+  1. **临时将副本数调为 0**（极大降低磁盘 I/O 和 CPU 写入消耗）：
+     ```json
+     PUT /knowledge_chunks_v1/_settings
+     {
+       "index.number_of_replicas": 0
+     }
+     ```
+  2. **调大 Refresh 间隔**（把 1 秒一次的刷写合并改为 60 秒一次）：
+     ```json
+     PUT /knowledge_chunks_v1/_settings
+     {
+       "index.refresh_interval": "60s"
+     }
+     ```
+  3. **业务端（客户端）立即进行限流与批处理合并**：
+     * 停止单条插入，改用 `Bulk API`。
+     * 单次 Bulk 大小调整到 **5MB - 10MB**。
+     * 减少客户端并行写入的线程并发数。
 
-**Slow Log 配置**（记录慢查询）：
+---
 
-```json
-PUT /product_index/_settings
-{
-  "index.search.slowlog.threshold.query.warn": "10s",
-  "index.search.slowlog.threshold.query.info": "5s",
-  "index.search.slowlog.threshold.fetch.warn": "1s"
-}
-```
+### 11.3 事故三：集群频繁熔断，报错 CircuitBreakingException，JVM 内存居高不下
 
-### 11.4 JVM Heap 高
+#### 11.3.1 场景模拟
+集群开始疯狂报 `CircuitBreakingException` 错误，查询经常报错拒绝，或者部分节点频繁因内存溢出（OOM）离线重启。
 
-常见原因：
+#### 11.3.2 排查与解决步骤
 
-- **大聚合**：高基数字段聚合产生大量桶。
-- **Mapping 太多**：字段数过多，Field Data 占用大。
-- **Fielddata 误用**：对 `text` 字段做聚合/排序会加载 Fielddata 到 Heap。
-- **Segment / Shard 太多**：每个 Shard 的每个 Segment 都占固定内存。
+* **第一步：诊断内存开销占比**
+  查看各节点 JVM Heap 使用率：
+  ```bash
+  GET /_cat/nodes?v&h=name,ip,heap.percent,ram.percent,cpu
+  ```
+  查看是哪个断路器（Breaker）触发了熔断：
+  ```bash
+  GET /_nodes/stats/breaker
+  ```
+  **诊断要点**：
+  * 若 `fielddata` 熔断器内存占用极高，说明有 `text` 字段被误用于排序或聚合，导致大量 Fielddata 加载进堆。
+  * 若 `request` 或 `parent` 熔断器触发，说明单次查询聚合消耗了过多内存。
 
-解决：
+* **第二步：紧急清理内存缓存（应急措施）**
+  如果是 Fielddata 撑爆了堆，先执行缓存清理释放内存，防止集群彻底挂掉：
+  ```bash
+  POST /_cache/clear?fielddata=true
+  ```
 
-```bash
-# 查看 Heap 使用
-GET /_nodes/stats/jvm
+* **第三步：根治问题的长效调优**
+  1. **纠正 Mapping 设计**：检查导致熔断的字段。如果是对 `text` 字段做聚合/排序，必须将其类型修改为 `keyword`（或使用其 `.keyword` 子字段）。
+  2. **限制高基数聚合**：避免在类似用户 ID、UUID 等包含数亿不同值的字段上进行 `terms` 聚合。如果必须做，改用 `composite` 聚合进行分页提取。
+  3. **控制集群分片数**：很多时候内存居高不下是因为 Segment 数量过多。检查集群总分片数，下线或合并长期不写入的历史索引：
+     ```bash
+     # 强制合并小 Segment（大索引在写入期间禁用此命令）
+     POST /old_index_2025/_forcemerge?max_num_segments=1
+     ```
 
-# 查看 Segment 数量
-GET /_cat/indices?v&h=index,pri,rep,docs.count,store.size,pri.store.size
+---
 
-# 强制 Merge（减少 Segment，大 Index 慎用）
-POST /product_index/_forcemerge?max_num_segments=1
-```
+### 11.4 事故四：查询性能骤降，响应时间变长，频繁出现 Slow Log
 
-### 11.5 Circuit Breaker（断路器）
+#### 11.4.1 场景模拟
+用户反馈搜索页面转圈，经常出现 504 门户超时。
 
-ES 有内置的断路器机制，当某个操作预计使用的内存超过阈值时，直接拒绝请求，防止 OOM：
+#### 11.4.2 排查与解决步骤
 
-| 断路器 | 默认阈值 | 作用 |
-| --- | --- | --- |
-| `request` | Heap 的 60% | 单个请求内存上限 |
-| `fielddata` | Heap 的 40% | Fielddata 加载上限 |
-| `parent` | Heap 的 95% | 所有断路器的总上限 |
+* **第一步：定位慢查询语句**
+  如果已经在索引设置中配置了慢日志（Slow Log），直接去 ES 的日志目录（如 `/data/elasticsearch/logs/`）下查看 `*_index_search_slowlog.log` 文本文件。
+  如果没有开启，执行以下命令开启慢查询日志：
+  ```json
+  PUT /_settings
+  {
+    "index.search.slowlog.threshold.query.warn": "2s",
+    "index.search.slowlog.threshold.query.info": "1s"
+  }
+  ```
 
-如果频繁触发 Circuit Breaker，说明查询设计有问题，需要优化查询而不是调高阈值。
+* **第二步：分析慢查询的执行计划**
+  在 Kibana Dev Tools 中，将定位到的慢查询 DSL 语句带入 `_explain` 或 `profile` 进行分析：
+  ```json
+  GET /knowledge_chunks_read/_search
+  {
+    "profile": true,
+    "query": {
+      "match": { "chunkText": "Spring Boot 核心原理" }
+    }
+  }
+  ```
+  **诊断要点**：
+  * 查看哪个 Shard 的耗时最长。
+  * 检查是否由于 `match` 查询中的分词数量过多，或者执行了复杂的 `script` 脚本计算。
+
+* **第三步：优化 DSL 编写**
+  1. **用 Filter 代替 Query**：不需要相关性打分的过滤条件（如状态、分类、租户 ID），全部从 `must` 移入 `filter`。ES 会自动缓存 filter 结果（Filter Cache），下次查询时直接跳过评分且命中缓存。
+  2. **消灭深分页**：检查客户端是否写了 `from: 10000, size: 20` 这样的深分页语句。深分页在分布式 ES 中需要协调节点拉取所有分片的前 10020 条数据在内存中重新排序，开销极大。
+     * *优化*：强制禁止用户翻页超过 100 页。如果业务需要导出或拉取全部数据，必须修改客户端改用 **`search_after`** 滚动检索。
+  3. **避免前缀通配符查询**：严禁在生产中使用 `{"wildcard": {"title": "*java"}}` 这种以星号开头的模糊匹配，这会导致全表扫描。
 
 ---
 

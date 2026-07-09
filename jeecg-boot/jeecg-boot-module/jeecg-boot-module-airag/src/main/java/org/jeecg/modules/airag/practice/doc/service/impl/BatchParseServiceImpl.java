@@ -15,6 +15,10 @@ import org.jeecg.modules.airag.practice.doc.service.BatchParseService.FileUpload
 import org.jeecg.modules.airag.practice.doc.service.DocParserClient;
 import org.jeecg.modules.airag.practice.doc.vo.*;
 import org.jeecg.modules.airag.practice.threadpool.PracticeThreadPool;
+//update-begin---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
+import org.jeecg.modules.airag.practice.sync.dto.EsSyncMessage;
+import org.jeecg.modules.airag.practice.sync.producer.EsSyncProducer;
+//update-end---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
 import org.jeecg.modules.airag.practice.vector.service.VectorStoreService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -69,6 +73,11 @@ public class BatchParseServiceImpl implements BatchParseService {
 
     @Autowired(required = false)
     private VectorStoreService vectorStoreService;
+
+//update-begin---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
+    @Resource
+    private EsSyncProducer esSyncProducer;
+//update-end---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
 
     @Resource
     @Qualifier("practiceAsyncPool")
@@ -212,20 +221,14 @@ public class BatchParseServiceImpl implements BatchParseService {
             // ---------- 更新知识库计数 ----------
             updateKnowledgeBaseCounts(kbId);
 
-            // ---------- 向量化入 ES（失败时标记状态，便于后续重试） ----------
-            int vectorizedCount = 0;
-            if (vectorStoreService != null && !chunkEntities.isEmpty()) {
-                try {
-                    vectorizedCount = vectorStoreService.vectorizeAndStore(documentId, kbId, chunkEntities);
-                    doc.setStatus("vectorized");
-                    aiDocumentMapper.updateById(doc);
-                    log.info("向量化完成: documentId={}, vectors={}", documentId, vectorizedCount);
-                } catch (Exception e) {
-                    log.warn("向量化失败: documentId={}, error={}", documentId, e.getMessage());
-                    doc.setStatus("vectorize_failed");
-                    aiDocumentMapper.updateById(doc);
-                }
+            // ---------- 异步发送同步消息至 ActiveMQ 队列 ----------
+//update-begin---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
+            if (!chunkEntities.isEmpty()) {
+                esSyncProducer.sendSyncMessage(EsSyncMessage.ACTION_INDEX, documentId, kbId);
+                log.info("已向 ActiveMQ 发送异步向量化同步消息: documentId={}", documentId);
             }
+//update-end---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
+            int vectorizedCount = 0;
 
             // ---------- 构建返回结果 ----------
             List<DocumentChunkVO> chunkPreview = parseResult.getChunks().stream()

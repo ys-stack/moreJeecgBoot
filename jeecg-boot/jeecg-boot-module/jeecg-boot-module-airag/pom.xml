@@ -278,5 +278,12 @@
             <groupId>org.springframework</groupId>
             <artifactId>spring-aspects</artifactId>
         </dependency>
+        <!--update-begin-author:ys-date:2026-07-09-for:MySQL-ES异步同步-->
+        <!-- ActiveMQ 消息队列 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-activemq</artifactId>
+        </dependency>
+        <!--update-end-author:ys-date:2026-07-09-for:MySQL-ES异步同步-->
     </dependencies>
 </project>

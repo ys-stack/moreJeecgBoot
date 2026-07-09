@@ -14,6 +14,8 @@ import org.jeecg.modules.airag.practice.doc.parser.MarkdownParser;
 import org.jeecg.modules.airag.practice.doc.service.IAiDocumentChunkService;
 import org.jeecg.modules.airag.practice.doc.vo.DocumentChunkVO;
 import org.jeecg.modules.airag.practice.doc.vo.DocumentUploadResultVO;
+import org.jeecg.modules.airag.practice.sync.dto.EsSyncMessage;
+import org.jeecg.modules.airag.practice.sync.producer.EsSyncProducer;
 import org.jeecg.modules.airag.practice.vector.service.VectorStoreService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -64,6 +66,8 @@ public class AiDocumentChunkServiceImpl
 
     @Autowired(required = false)
     private VectorStoreService vectorStoreService;
+    @Resource
+    private EsSyncProducer esSyncProducer;
 
     @Value("${jeecg.path.upload:/opt/upFiles}")
     private String uploadPath;
@@ -141,18 +145,12 @@ public class AiDocumentChunkServiceImpl
         // ========== 8. 更新知识库冗余计数 ==========
         updateKnowledgeBaseCounts(kb.getId());
 
-        // ========== 9. 自动向量化存入 ES（失败不影响上传） ==========
-        int vectorizedCount = 0;
-        if (vectorStoreService != null && !entities.isEmpty()) {
-            try {
-                vectorizedCount = vectorStoreService.vectorizeAndStore(documentId, kb.getId(), entities);
-                doc.setStatus("vectorized");
-                aiDocumentMapper.updateById(doc);
-                log.info("文档自动向量化完成: documentId={}, 向量数={}", documentId, vectorizedCount);
-            } catch (Exception e) {
-                log.warn("文档向量化失败（不影响上传结果）: documentId={}, error={}", documentId, e.getMessage());
-            }
+        // ========== 9. 自动向量化异步同步至 ES ==========
+        if (!entities.isEmpty()) {
+            esSyncProducer.sendSyncMessage(EsSyncMessage.ACTION_INDEX, documentId, kb.getId());
+            log.info("已向 ActiveMQ 发送文档异步向量化消息: documentId={}", documentId);
         }
+        int vectorizedCount = 0;
 
         // ========== 10. 构建返回结果 ==========
         int totalTokens = chunkVOs.stream().mapToInt(DocumentChunkVO::getTokenCount).sum();
@@ -185,14 +183,11 @@ public class AiDocumentChunkServiceImpl
         // 删除分片
         int deleted = deleteChunksByDocumentId(documentId);
 
-        // 同步删除 ES 中的向量数据（失败不影响删除操作）
-        if (vectorStoreService != null) {
-            try {
-                vectorStoreService.deleteByDocumentId(documentId);
-            } catch (Exception e) {
-                log.warn("ES 向量清理失败（不影响删除结果）: documentId={}, error={}", documentId, e.getMessage());
-            }
-        }
+//update-begin---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
+        // 发送异步删除消息到 ActiveMQ 队列进行 ES 数据清理
+        esSyncProducer.sendSyncMessage(EsSyncMessage.ACTION_DELETE, documentId, null);
+        log.info("已发送异步删除消息到 ActiveMQ: documentId={}", documentId);
+//update-end---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
 
         // 删除文档记录
         AiDocument doc = aiDocumentMapper.selectById(documentId);
