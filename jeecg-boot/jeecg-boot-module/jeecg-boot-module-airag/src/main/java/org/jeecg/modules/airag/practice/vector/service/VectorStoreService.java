@@ -44,6 +44,9 @@ public class VectorStoreService {
     @Resource
     private RerankService rerankService;
 
+    // 限制向 ES 物理写入的最大并发 HTTP 连接数，防止高并发导致 ES 拒绝（429）
+    private final java.util.concurrent.Semaphore writeSemaphore = new java.util.concurrent.Semaphore(2);
+
     // ==================== 索引管理 ====================
 
     /**
@@ -173,29 +176,36 @@ public class VectorStoreService {
         HttpEntity<String> entity = new HttpEntity<>(bulkBody.toString(), headers);
 
         try {
-            ResponseEntity<String> resp = practiceEsRestTemplate.exchange(url, HttpMethod.POST, entity, String.class);
-            JSONObject result = JSON.parseObject(resp.getBody());
+            writeSemaphore.acquire();
+            try {
+                ResponseEntity<String> resp = practiceEsRestTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+                JSONObject result = JSON.parseObject(resp.getBody());
 
-            if (result.getBooleanValue("errors")) {
-                // 部分失败，记录详情
-                JSONArray items = result.getJSONArray("items");
-                int errorCount = 0;
-                for (int i = 0; i < items.size(); i++) {
-                    JSONObject item = items.getJSONObject(i).getJSONObject("index");
-                    if (item != null && item.getInteger("status") >= 400) {
-                        errorCount++;
-                        log.warn("ES bulk 写入失败: chunk={}, status={}, error={}",
-                                chunks.get(i).getId(), item.getInteger("status"),
-                                item.getJSONObject("error"));
+                if (result.getBooleanValue("errors")) {
+                    // 部分失败，记录详情
+                    JSONArray items = result.getJSONArray("items");
+                    int errorCount = 0;
+                    for (int i = 0; i < items.size(); i++) {
+                        JSONObject item = items.getJSONObject(i).getJSONObject("index");
+                        if (item != null && item.getInteger("status") >= 400) {
+                            errorCount++;
+                            log.warn("ES bulk 写入失败: chunk={}, status={}, error={}",
+                                    chunks.get(i).getId(), item.getInteger("status"),
+                                    item.getJSONObject("error"));
+                        }
                     }
+                    log.error("ES bulk 写入部分失败: 总数={}, 失败数={}", chunks.size(), errorCount);
+                    return chunks.size() - errorCount;
                 }
-                log.error("ES bulk 写入部分失败: 总数={}, 失败数={}", chunks.size(), errorCount);
-                return chunks.size() - errorCount;
+
+                log.info("ES 向量写入成功: documentId={}, chunks={}", documentId, chunks.size());
+                return chunks.size();
+            } finally {
+                writeSemaphore.release();
             }
-
-            log.info("ES 向量写入成功: documentId={}, chunks={}", documentId, chunks.size());
-            return chunks.size();
-
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("ES 向量写入被中断", e);
         } catch (Exception e) {
             log.error("ES bulk 写入失败", e);
             throw new RuntimeException("ES 向量写入失败: " + e.getMessage(), e);
