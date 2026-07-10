@@ -8,6 +8,7 @@ import org.jeecg.modules.airag.practice.doc.mapper.AiDocumentMapper;
 import org.jeecg.modules.airag.practice.doc.service.IAiDocumentChunkService;
 import org.jeecg.modules.airag.practice.sync.dto.EsSyncMessage;
 import org.jeecg.modules.airag.practice.sync.producer.EsSyncProducer;
+import org.jeecg.modules.airag.practice.sync.service.IEsSyncTaskService;
 import org.jeecg.modules.airag.practice.vector.service.VectorStoreService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jms.annotation.JmsListener;
@@ -26,7 +27,6 @@ import java.util.List;
  * @Author: jeecg-boot
  * @Date: 2026-07-09
  */
-//update-begin---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
 @Slf4j
 @Component
 public class EsSyncConsumer {
@@ -40,6 +40,9 @@ public class EsSyncConsumer {
     @Autowired
     private AiDocumentMapper aiDocumentMapper;
 
+    @Autowired
+    private IEsSyncTaskService esSyncTaskService;
+
     /**
      * 消费同步消息并写入 ES。
      * 当同步操作由于 ES 故障或网络问题抛出异常时，触发 @Retryable 机制：
@@ -48,7 +51,7 @@ public class EsSyncConsumer {
      *
      * @param jsonStr MQ 中的 JSON 消息字符串
      */
-    @JmsListener(destination = EsSyncProducer.QUEUE_NAME)
+    @JmsListener(destination = EsSyncProducer.QUEUE_NAME, concurrency = "${practice.mq.concurrency:2}")
     @Retryable(
             retryFor = { Exception.class },
             maxAttempts = 5,
@@ -71,7 +74,11 @@ public class EsSyncConsumer {
             handleDeleteAction(documentId);
         } else {
             log.warn("[MQ同步] 未知操作类型: {}", action);
+            return;
         }
+
+        // 成功后标记同步任务完成
+        esSyncTaskService.completeTask(documentId, action);
     }
 
     /**
@@ -136,6 +143,11 @@ public class EsSyncConsumer {
                     aiDocumentMapper.updateById(doc);
                     log.info("[MQ同步] 已将文档状态重置为: vectorize_failed, docId={}", message.getDocumentId());
                 }
+            }
+
+            // 失败后标记同步任务失败
+            if (message != null) {
+                esSyncTaskService.failTask(message.getDocumentId(), message.getAction(), e.getMessage());
             }
         } catch (Exception ex) {
             log.error("[MQ同步] 执行 Recover 兜底逻辑异常", ex);

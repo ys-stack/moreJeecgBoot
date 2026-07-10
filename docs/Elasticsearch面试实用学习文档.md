@@ -1801,42 +1801,64 @@ Pipeline 由 Ingest 节点执行，不占用 Data 节点资源。
 ### 11.2 事故二：写入响应变慢，写入被频繁拒绝（Reject，HTTP 429）
 
 #### 11.2.1 场景模拟
-在大批量写入数据（如知识库批量同步或促销导入）时，Java 客户端疯狂报错：`ElasticsearchException[Elasticsearch exception [type=es_rejected_execution_exception...]]`。
+在大批量写入数据（如知识库批量同步或促销导入）时，Java 客户端发出的请求响应时间吞吐量急剧恶化，且日志中疯狂报错：`ElasticsearchException[Elasticsearch exception [type=es_rejected_execution_exception...]]`。
 
 #### 11.2.2 排查与解决步骤
 
-* **第一步：排查线程池队列状况**
-  检查各节点的写入线程池是否爆满：
+* **第一步：排查线程池队列状况（诊断是否为“请求处理能力瓶颈”）**
+  检查各节点的写入线程池状态：
   ```bash
   GET /_cat/thread_pool/write?v&h=node_name,active,queue,rejected
   ```
   **诊断要点**：
-  * 若 `queue` 达到上限（默认 10000），且 `rejected` 持续增长，说明写入请求速度远远超过了 Data 节点的处理能力。
+  * 若 `active` 占满核心线程，且 `queue` 达到最大队列上限（默认 10000），`rejected` 指标在持续飞涨，说明**写入请求速度远远超过了 Data 节点的处理能力**。
 
-* **第二步：分析系统资源瓶颈**
-  在故障物理机上运行系统监控命令：
-  * 运行 `top`：检查 CPU 使用率。如果接近 100% 且 GC 线程占满 CPU，说明正在进行剧烈的垃圾回收或计算。
-  * 运行 `iostat -x 1`：检查磁盘 `%util` 是否达到 100%。如果 I/O 堵死，说明机械硬盘或云盘吞吐达到极限。
+  **🛠️ 针对“写入速度超限”的处理与优化措施**：
+  1.  **客户端（Java 侧）退避与限流**：
+      *   **引入熔断器**：Java 客户端需集成 Sentinel 或 RateLimiter。如果捕获到 HTTP 429 状态码或拒绝异常，必须触发客户端退避，采用**指数退避重试（Exponential Backoff）**的频率延时重试，避免盲目重试加重集群雪崩。
+      *   **严格使用 Bulk 批量写入**：严禁单条数据高频写入。建议单次 Bulk 包含 1000 ~ 5000 条文档，总 Payload 大小控制在 **5MB - 10MB** 之间（需根据单条数据大小和网络带宽微调）。
+      *   **限制并发线程数**：降低客户端并行发送 Bulk 请求的并发度。
+  2.  **集群分片均衡与路由调优**：
+      *   **合理设置主分片数（Primary Shards）**：检查被写入索引的主分片数。如果主分片数仅为 1，所有的写入压力将被强行路由到单个 Data 节点，造成单点性能瓶颈。建议将主分片数扩充为与集群 Data 节点数相等或呈整数倍，分摊分片写入压力。
+      *   **引入协调节点（Coordinating Node）**：部署不存数据的协调节点，分担客户端 Bulk 请求的解析、拆分和向各 Data 节点分发分片时的 CPU 消耗。
 
-* **第三步：采取应急降载与调优措施**
-  1. **临时将副本数调为 0**（极大降低磁盘 I/O 和 CPU 写入消耗）：
-     ```json
-     PUT /knowledge_chunks_v1/_settings
-     {
-       "index.number_of_replicas": 0
-     }
-     ```
-  2. **调大 Refresh 间隔**（把 1 秒一次的刷写合并改为 60 秒一次）：
-     ```json
-     PUT /knowledge_chunks_v1/_settings
-     {
-       "index.refresh_interval": "60s"
-     }
-     ```
-  3. **业务端（客户端）立即进行限流与批处理合并**：
-     * 停止单条插入，改用 `Bulk API`。
-     * 单次 Bulk 大小调整到 **5MB - 10MB**。
-     * 减少客户端并行写入的线程并发数。
+* **第二步：分析系统资源瓶颈（诊断是 GC 频繁还是磁盘 I/O 达到极限）**
+  在故障的 Data 节点上，使用 Linux 命令行工具定位资源短板：
+  
+  **🛠️ 情况 A：CPU 接近 100% 且 JVM 正在进行剧烈的 GC（JVM 停顿）**
+  *   **排查方法**：运行 `top` 命令发现 CPU 跑满，且运行 `jstat -gcutil <pid> 1000` 发现 Full GC 非常频繁，或者查看 `elasticsearch.log` 发现大量的 `[gc][young]` / `[gc][old]` 产生的 JVM pause 慢日志（如 `JVM spent 1000ms executing GC`）。
+  *   **🛠️ 对应的优化与解决步骤**：
+      1.  **防止大对象直接进入老年代**：检查客户端的 Bulk 发送大小，如果单次 Payload 超过 50MB 甚至 100MB，超大对象直接跳过新生代进入老年代，极易频繁触发 Full GC。必须限制 Bulk 包的最大限制。
+      2.  **严禁读写高负载混合**：检查是否在写入高负载期跑了复杂的聚合查询或深分页。复杂的聚合查询加载大量数据到 JVM 堆中（如 Fielddata 缓存），导致写入内存不足引发 GC。必须在写入高峰期禁止大范围查询。
+      3.  **锁定 JVM 内存（Memory Lock）**：确保 `elasticsearch.yml` 中开启了 `bootstrap.memory_lock: true`。这能彻底锁住 JVM 内存，禁止操作系统将 ES 内存 Swap 交换到磁盘虚拟内存中。一旦被 swap，GC 回收速度会暴跌百倍，引发长达数秒甚至十几秒的 STW。
+      4.  **垃圾回收器调优**：在 ES 8.x 中，推荐使用 G1 回收器。对于超过 8GB 的大堆，可以微调 G1 的 `InitiatingHeapOccupancyPercent` 参数，避免过早或过晚进行回收。
+
+  **🛠️ 情况 B：磁盘 I/O 吞吐达到物理极限（磁盘读写被堵死）**
+  *   **排查方法**：运行 `iostat -x 1` 监控磁盘，发现磁盘的 `%util` 接近 100%，或者 `await`（I/O 平均等待时间）飙升到几百毫秒。这代表磁盘已经无法及时将数据从内存刷盘（Flush）并进行段合并（Merge）。
+  *   **🛠️ 对应的优化与解决步骤**：
+      1.  **物理更换为 SSD**：对于 ES 这类 I/O 密集型应用，必须使用**企业级固态硬盘（SSD，特别是 NVMe SSD）**作为数据盘。普通机械硬盘（HDD）随机写 IOPS 极低，一旦面对 ES 并发段合并，磁盘会彻底堵死。
+      2.  **零副本写入（临时应急）**：如果是大批量历史数据同步或初期导入，在导入前临时将索引副本数设为 0，导入完成再开启：
+          ```json
+          PUT /knowledge_chunks_v1/_settings
+          {
+            "index.number_of_replicas": 0
+          }
+          ```
+      3.  **调大 Refresh 间隔（降低磁盘写入频率）**：默认 ES 每秒刷新一次（生成一个小段 Segment），导致高频落盘产生大量零碎小段，引起剧烈的段合并（Merge）。应调大为 `30s` 或 `60s`，甚至导入期间置为 `-1`（完全依靠写入 buffer，最后强制刷盘）：
+          ```json
+          PUT /knowledge_chunks_v1/_settings
+          {
+            "index.refresh_interval": "60s"
+          }
+          ```
+      4.  **Translog 改为异步刷盘（Async）**：默认情况下 ES 每次写入请求都落盘 Translog。若能容忍几秒钟的数据丢失风险，可将刷盘方式从 `request` 改为 `async`（异步每 5 秒刷盘一次），这能成倍降低磁盘 I/O 消耗：
+          ```json
+          PUT /knowledge_chunks_v1/_settings
+          {
+            "index.translog.durability": "async",
+            "index.translog.sync_interval": "5s"
+          }
+          ```
 
 ---
 

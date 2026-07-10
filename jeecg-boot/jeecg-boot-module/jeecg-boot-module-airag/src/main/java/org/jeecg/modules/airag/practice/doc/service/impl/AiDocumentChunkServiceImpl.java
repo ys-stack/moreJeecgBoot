@@ -16,6 +16,9 @@ import org.jeecg.modules.airag.practice.doc.vo.DocumentChunkVO;
 import org.jeecg.modules.airag.practice.doc.vo.DocumentUploadResultVO;
 import org.jeecg.modules.airag.practice.sync.dto.EsSyncMessage;
 import org.jeecg.modules.airag.practice.sync.producer.EsSyncProducer;
+import org.jeecg.modules.airag.practice.sync.service.IEsSyncTaskService;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionSynchronization;
 import org.jeecg.modules.airag.practice.vector.service.VectorStoreService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -68,6 +71,8 @@ public class AiDocumentChunkServiceImpl
     private VectorStoreService vectorStoreService;
     @Resource
     private EsSyncProducer esSyncProducer;
+    @Autowired
+    private IEsSyncTaskService esSyncTaskService;
 
     @Value("${jeecg.path.upload:/opt/upFiles}")
     private String uploadPath;
@@ -145,10 +150,16 @@ public class AiDocumentChunkServiceImpl
         // ========== 8. 更新知识库冗余计数 ==========
         updateKnowledgeBaseCounts(kb.getId());
 
-        // ========== 9. 自动向量化异步同步至 ES ==========
+        // ========== 9. 自动向量化异步同步至 ES (Transactional Outbox 模式) ==========
         if (!entities.isEmpty()) {
-            esSyncProducer.sendSyncMessage(EsSyncMessage.ACTION_INDEX, documentId, kb.getId());
-            log.info("已向 ActiveMQ 发送文档异步向量化消息: documentId={}", documentId);
+            esSyncTaskService.saveTask(EsSyncMessage.ACTION_INDEX, documentId, kb.getId());
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    esSyncProducer.sendSyncMessage(EsSyncMessage.ACTION_INDEX, documentId, kb.getId());
+                    log.info("已在事务提交后向 ActiveMQ 发送文档异步向量化消息: documentId={}", documentId);
+                }
+            });
         }
         int vectorizedCount = 0;
 
@@ -184,9 +195,17 @@ public class AiDocumentChunkServiceImpl
         int deleted = deleteChunksByDocumentId(documentId);
 
 //update-begin---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
-        // 发送异步删除消息到 ActiveMQ 队列进行 ES 数据清理
-        esSyncProducer.sendSyncMessage(EsSyncMessage.ACTION_DELETE, documentId, null);
-        log.info("已发送异步删除消息到 ActiveMQ: documentId={}", documentId);
+        // 1. 插入本地删除同步任务至 Outbox 表
+        esSyncTaskService.saveTask(EsSyncMessage.ACTION_DELETE, documentId, null);
+
+        // 2. 事务提交后发送异步删除消息到 ActiveMQ 队列进行 ES 数据清理
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                esSyncProducer.sendSyncMessage(EsSyncMessage.ACTION_DELETE, documentId, null);
+                log.info("已在事务提交后发送异步删除消息到 ActiveMQ: documentId={}", documentId);
+            }
+        });
 //update-end---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
 
         // 删除文档记录

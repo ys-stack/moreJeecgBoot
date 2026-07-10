@@ -18,6 +18,9 @@ import org.jeecg.modules.airag.practice.threadpool.PracticeThreadPool;
 //update-begin---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
 import org.jeecg.modules.airag.practice.sync.dto.EsSyncMessage;
 import org.jeecg.modules.airag.practice.sync.producer.EsSyncProducer;
+import org.jeecg.modules.airag.practice.sync.service.IEsSyncTaskService;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionSynchronization;
 //update-end---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
 import org.jeecg.modules.airag.practice.vector.service.VectorStoreService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -77,6 +80,8 @@ public class BatchParseServiceImpl implements BatchParseService {
 //update-begin---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
     @Resource
     private EsSyncProducer esSyncProducer;
+    @Autowired
+    private IEsSyncTaskService esSyncTaskService;
 //update-end---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
 
     @Resource
@@ -221,11 +226,22 @@ public class BatchParseServiceImpl implements BatchParseService {
             // ---------- 更新知识库计数 ----------
             updateKnowledgeBaseCounts(kbId);
 
-            // ---------- 异步发送同步消息至 ActiveMQ 队列 ----------
+            // ---------- 异步发送同步消息至 ActiveMQ 队列 (Transactional Outbox 模式) ----------
 //update-begin---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
             if (!chunkEntities.isEmpty()) {
-                esSyncProducer.sendSyncMessage(EsSyncMessage.ACTION_INDEX, documentId, kbId);
-                log.info("已向 ActiveMQ 发送异步向量化同步消息: documentId={}", documentId);
+                esSyncTaskService.saveTask(EsSyncMessage.ACTION_INDEX, documentId, kbId);
+                if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            esSyncProducer.sendSyncMessage(EsSyncMessage.ACTION_INDEX, documentId, kbId);
+                            log.info("已在事务提交后发送异步向量化同步消息: documentId={}", documentId);
+                        }
+                    });
+                } else {
+                    esSyncProducer.sendSyncMessage(EsSyncMessage.ACTION_INDEX, documentId, kbId);
+                    log.info("当前无活动事务，已直接发送异步向量化同步消息: documentId={}", documentId);
+                }
             }
 //update-end---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
             int vectorizedCount = 0;
