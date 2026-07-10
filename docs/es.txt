@@ -164,8 +164,8 @@ ES中翻得越深越慢，常用search_after的方式取上一页最后一条文
         17.1.3.GET /_cat/shards?v&h=index,shard,prirep,state,node,unassigned.reason&s=state:asc   判断是索引的哪个分片没有正常启动
         17.1.4.GET /_cluster/allocation/explain  查看节点无法分配的原因`node_left`（节点宕机），`the shard cannot be allocated because the disk watermark was exceeded`（磁盘空间超出高水位线），节点太少
         17.1.5.节点重启或清理完磁盘后，如果分片未自动恢复，POST /_cluster/reroute?retry_failed=true 强制手动触发分片重分配
-    17.2.写入变慢或者被拒绝
-        17.2.1.排查各节点线程池队列情况，若queue达到上线，说明写入请求速度超过了Data节点的处理能力。正常来说在为了防范高并发写入已经在写入和消费加了并发限制，
+    17.2.写入变慢或者被拒绝（http429）
+        17.2.1.排查各节点线程池队列情况，若queue达到上线，说明写入请求速度超过了Data节点的处理能力。top正常来说在为了防范高并发写入已经在写入和消费加了并发限制，
 比如只能有两个并发线程进行处理，从物理上隔绝。如果线上再出现此类问题，优先隔断mq的流量，在将es索引的副本设为0（磁盘写入量），将刷盘的时间调大
 
 

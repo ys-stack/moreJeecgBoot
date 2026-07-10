@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocumentChunk;
 import org.jeecg.modules.airag.practice.vector.config.PracticeVectorConfig;
 import org.jeecg.modules.airag.practice.vector.vo.VectorSearchResultVO;
+import org.jeecg.modules.airag.practice.aspect.annotation.CircuitBreaker;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -226,6 +227,9 @@ public class VectorStoreService {
      * @param knowledgeBaseId 知识库ID（可选，为空则搜索全部）
      * @return 相似分片列表（按 Rerank 分数降序）
      */
+    //update-begin---author:ys ---date:2026-07-10  for：MySQL-ES异步同步-----------
+    @CircuitBreaker(value = "es_vector_search", failureThreshold = 5, timeout = 10000, fallbackMethod = "searchFallback")
+    //update-end---author:ys ---date:2026-07-10  for：MySQL-ES异步同步-----------
     public List<VectorSearchResultVO> search(String query, int topK, String knowledgeBaseId) {
         // 构建单知识库 filter（term）
         JSONObject filter = null;
@@ -246,6 +250,9 @@ public class VectorStoreService {
      * @param knowledgeBaseIds  允许访问的知识库ID列表（为空则搜索全部）
      * @return 相似分片列表
      */
+    //update-begin---author:ys ---date:2026-07-10  for：MySQL-ES异步同步-----------
+    @CircuitBreaker(value = "es_vector_search_multi_kb", failureThreshold = 5, timeout = 10000, fallbackMethod = "searchByKnowledgeBaseIdsFallback")
+    //update-end---author:ys ---date:2026-07-10  for：MySQL-ES异步同步-----------
     public List<VectorSearchResultVO> searchByKnowledgeBaseIds(String query, int topK, List<String> knowledgeBaseIds) {
         if (knowledgeBaseIds == null || knowledgeBaseIds.isEmpty()) {
             return Collections.emptyList();
@@ -481,4 +488,22 @@ public class VectorStoreService {
         m.put("similarity", "cosine");
         return m;
     }
+
+    //update-begin---author:ys ---date:2026-07-10  for：MySQL-ES异步同步-----------
+    /**
+     * search 降级方法（发生熔断或检索故障时触发，返回空列表）
+     */
+    public List<VectorSearchResultVO> searchFallback(String query, int topK, String knowledgeBaseId) {
+        log.warn("[熔断器降级] ES 单知识库检索触发降级，返回空列表. query={}", query);
+        return Collections.emptyList();
+    }
+
+    /**
+     * searchByKnowledgeBaseIds 降级方法（发生熔断或检索故障时触发，返回空列表）
+     */
+    public List<VectorSearchResultVO> searchByKnowledgeBaseIdsFallback(String query, int topK, List<String> knowledgeBaseIds) {
+        log.warn("[熔断器降级] ES 多知识库检索触发降级，返回空列表. query={}", query);
+        return Collections.emptyList();
+    }
+    //update-end---author:ys ---date:2026-07-10  for：MySQL-ES异步同步-----------
 }
