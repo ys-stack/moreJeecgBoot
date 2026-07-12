@@ -11,7 +11,6 @@ import java.io.Serializable;
  * @Author: jeecg-boot
  * @Date: 2026-07-09
  */
-//update-begin---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -21,6 +20,8 @@ public class EsSyncMessage implements Serializable {
     public static final String ACTION_INDEX = "INDEX";
     public static final String ACTION_DELETE = "DELETE";
 
+    /** Outbox 任务 ID，用于精确确认和失败重试 */
+    private String taskId;
     /** 操作类型: INDEX/DELETE */
     private String action;
     /** 文档 ID */
@@ -28,4 +29,3 @@ public class EsSyncMessage implements Serializable {
     /** 知识库 ID */
     private String knowledgeBaseId;
 }
-//update-end---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------

@@ -10,6 +10,7 @@ import org.jeecg.modules.airag.practice.vector.vo.VectorSearchResultVO;
 import org.jeecg.modules.airag.practice.aspect.annotation.CircuitBreaker;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import jakarta.annotation.Resource;
@@ -196,7 +197,7 @@ public class VectorStoreService {
                         }
                     }
                     log.error("ES bulk 写入部分失败: 总数={}, 失败数={}", chunks.size(), errorCount);
-                    return chunks.size() - errorCount;
+                    throw new IllegalStateException("ES bulk 写入部分失败: " + errorCount + "/" + chunks.size());
                 }
 
                 log.info("ES 向量写入成功: documentId={}, chunks={}", documentId, chunks.size());
@@ -227,9 +228,7 @@ public class VectorStoreService {
      * @param knowledgeBaseId 知识库ID（可选，为空则搜索全部）
      * @return 相似分片列表（按 Rerank 分数降序）
      */
-    //update-begin---author:ys ---date:2026-07-10  for：MySQL-ES异步同步-----------
-    @CircuitBreaker(value = "es_vector_search", failureThreshold = 5, timeout = 10000, fallbackMethod = "searchFallback")
-    //update-end---author:ys ---date:2026-07-10  for：MySQL-ES异步同步-----------
+    @CircuitBreaker(value = "es_vector_search", failureThreshold = 5, timeout = 10000)
     public List<VectorSearchResultVO> search(String query, int topK, String knowledgeBaseId) {
         // 构建单知识库 filter（term）
         JSONObject filter = null;
@@ -250,9 +249,7 @@ public class VectorStoreService {
      * @param knowledgeBaseIds  允许访问的知识库ID列表（为空则搜索全部）
      * @return 相似分片列表
      */
-    //update-begin---author:ys ---date:2026-07-10  for：MySQL-ES异步同步-----------
-    @CircuitBreaker(value = "es_vector_search_multi_kb", failureThreshold = 5, timeout = 10000, fallbackMethod = "searchByKnowledgeBaseIdsFallback")
-    //update-end---author:ys ---date:2026-07-10  for：MySQL-ES异步同步-----------
+    @CircuitBreaker(value = "es_vector_search_multi_kb", failureThreshold = 5, timeout = 10000)
     public List<VectorSearchResultVO> searchByKnowledgeBaseIds(String query, int topK, List<String> knowledgeBaseIds) {
         if (knowledgeBaseIds == null || knowledgeBaseIds.isEmpty()) {
             return Collections.emptyList();
@@ -390,9 +387,9 @@ public class VectorStoreService {
 
         JSONObject body = new JSONObject();
         JSONObject query = new JSONObject();
-        JSONObject match = new JSONObject();
-        match.put("document_id", documentId);
-        query.put("match", match);
+        JSONObject term = new JSONObject();
+        term.put("document_id", documentId);
+        query.put("term", term);
         body.put("query", query);
 
         HttpHeaders headers = new HttpHeaders();
@@ -405,10 +402,13 @@ public class VectorStoreService {
             long deleted = result.getLongValue("deleted");
             log.info("ES 向量删除完成: documentId={}, deleted={}", documentId, deleted);
             return deleted;
-        } catch (Exception e) {
-            // 索引不存在时不报错（可能从未向量化过）
-            log.warn("ES 向量删除异常（可能索引不存在）: documentId={}, error={}", documentId, e.getMessage());
+        } catch (HttpClientErrorException.NotFound e) {
+            // 索引不存在等价于没有待删除数据，是幂等成功。
+            log.info("ES 索引不存在，无需删除向量: documentId={}", documentId);
             return 0;
+        } catch (Exception e) {
+            log.error("ES 向量删除失败: documentId={}", documentId, e);
+            throw new RuntimeException("ES 向量删除失败: " + e.getMessage(), e);
         }
     }
 
@@ -421,9 +421,9 @@ public class VectorStoreService {
 
         JSONObject body = new JSONObject();
         JSONObject query = new JSONObject();
-        JSONObject match = new JSONObject();
-        match.put("document_id", documentId);
-        query.put("match", match);
+        JSONObject term = new JSONObject();
+        term.put("document_id", documentId);
+        query.put("term", term);
         body.put("query", query);
 
         HttpHeaders headers = new HttpHeaders();
@@ -434,8 +434,10 @@ public class VectorStoreService {
             ResponseEntity<String> resp = practiceEsRestTemplate.exchange(url, HttpMethod.POST, entity, String.class);
             JSONObject result = JSON.parseObject(resp.getBody());
             return result.getLongValue("count");
-        } catch (Exception e) {
+        } catch (HttpClientErrorException.NotFound e) {
             return 0;
+        } catch (Exception e) {
+            throw new RuntimeException("查询 ES 向量数量失败: " + e.getMessage(), e);
         }
     }
 

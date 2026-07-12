@@ -77,8 +77,8 @@ public class EsSyncConsumer {
             return;
         }
 
-        // 成功后标记同步任务完成
-        esSyncTaskService.completeTask(documentId, action);
+        // 只确认当前消息对应的任务，避免旧消息误完成后续任务。
+        esSyncTaskService.completeTask(message.getTaskId());
     }
 
     /**
@@ -90,20 +90,30 @@ public class EsSyncConsumer {
         // 1. 查询文档详情
         AiDocument doc = aiDocumentMapper.selectById(documentId);
         if (doc == null) {
-            log.warn("[MQ同步] 数据库中找不到文档记录，同步终止: docId={}", documentId);
+            // INDEX 与 DELETE 乱序时，旧 INDEX 不能把已删除数据重新留在 ES。
+            vectorStoreService.deleteByDocumentId(documentId);
+            log.warn("[MQ同步] 源文档已删除，已执行 ES 清理: docId={}", documentId);
             return;
         }
 
         // 2. 从 MySQL 读分片数据
         List<AiDocumentChunk> chunks = aiDocumentChunkService.listByDocumentId(documentId);
         if (chunks.isEmpty()) {
-            log.warn("[MQ同步] 文档无有效分片，跳过同步: docId={}", documentId);
+            vectorStoreService.deleteByDocumentId(documentId);
+            log.warn("[MQ同步] 文档无有效分片，已清理 ES 旧数据: docId={}", documentId);
             return;
         }
 
         // 3. 调用向量服务写入 ES
         int count = vectorStoreService.vectorizeAndStore(documentId, knowledgeBaseId, chunks);
         log.info("[MQ同步] 成功同步 {} 条向量到 ES: docId={}", count, documentId);
+
+        // 防止 DELETE 已先执行、旧 INDEX 后写入造成数据复活。
+        if (aiDocumentMapper.selectById(documentId) == null) {
+            vectorStoreService.deleteByDocumentId(documentId);
+            log.warn("[MQ同步] 写入期间源文档被删除，已补偿清理 ES: docId={}", documentId);
+            return;
+        }
 
         // 4. 更新 MySQL 状态为已向量化
         doc.setStatus("vectorized");
@@ -147,7 +157,7 @@ public class EsSyncConsumer {
 
             // 失败后标记同步任务失败
             if (message != null) {
-                esSyncTaskService.failTask(message.getDocumentId(), message.getAction(), e.getMessage());
+                esSyncTaskService.failTask(message.getTaskId(), e.getMessage());
             }
         } catch (Exception ex) {
             log.error("[MQ同步] 执行 Recover 兜底逻辑异常", ex);

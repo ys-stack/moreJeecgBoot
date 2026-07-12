@@ -29,9 +29,18 @@ public class EsSyncTask implements Serializable {
     /**
      * 任务状态常量
      */
+    /** 待投递：业务事务已提交，等待发送到 MQ。 */
     public static final String STATUS_PENDING = "PENDING";
+    /** 投递中：已被某个调度实例抢占，正在发送到 MQ。 */
+    public static final String STATUS_PROCESSING = "PROCESSING";
+    /** 已投递：消息已发送到 MQ，等待消费者处理确认。 */
+    public static final String STATUS_DISPATCHED = "DISPATCHED";
+    /** 已成功：ES 同步完成，任务生命周期结束。 */
     public static final String STATUS_SUCCESS = "SUCCESS";
+    /** 失败待重试：本次发送或消费失败，等待下轮补偿。 */
     public static final String STATUS_FAILED = "FAILED";
+    /** 死信：重试次数已耗尽，需要人工检查或重新触发。 */
+    public static final String STATUS_DEAD = "DEAD";
 
     @TableId(type = IdType.ASSIGN_ID)
     @Schema(description = "主键ID")
@@ -46,7 +55,7 @@ public class EsSyncTask implements Serializable {
     @Schema(description = "知识库ID")
     private String knowledgeBaseId;
 
-    @Schema(description = "状态(PENDING/SUCCESS/FAILED)")
+    @Schema(description = "状态(PENDING/PROCESSING/DISPATCHED/SUCCESS/FAILED/DEAD)")
     private String status;
 
     @Schema(description = "重试次数")

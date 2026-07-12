@@ -68,7 +68,13 @@ public class VectorSearchController {
 
             // 3. 向量化 + 写入 ES
             int count = vectorStoreService.vectorizeAndStore(documentId, doc.getKnowledgeBaseId(), chunks);
-
+            if (count != chunks.size()) {
+                return Result.error("向量化写入数量不一致，期望 " + chunks.size() + " 条，实际 " + count + " 条");
+            }
+            if (aiDocumentMapper.selectById(documentId) == null) {
+                vectorStoreService.deleteByDocumentId(documentId);
+                return Result.error("向量化期间文档已删除，已补偿清理 ES 数据");
+            }
             // 4. 更新文档状态（标记已向量化）
             doc.setStatus("vectorized");
             aiDocumentMapper.updateById(doc);

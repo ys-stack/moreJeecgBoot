@@ -13,7 +13,6 @@ import org.springframework.stereotype.Component;
  * @Author: jeecg-boot
  * @Date: 2026-07-09
  */
-//update-begin---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
 @Slf4j
 @Component
 public class EsSyncProducer {
@@ -33,20 +32,16 @@ public class EsSyncProducer {
      * @param documentId      文档ID
      * @param knowledgeBaseId 知识库ID
      */
-    public void sendSyncMessage(String action, String documentId, String knowledgeBaseId) {
+    public void sendSyncMessage(String taskId, String action, String documentId, String knowledgeBaseId) {
         if (jmsTemplate == null) {
-            log.warn("[MQ同步] JmsTemplate 未注入，跳过发送同步消息，请确保已引入 activemq 依赖");
-            return;
+            throw new IllegalStateException("JmsTemplate 未注入，无法发送 ES 同步消息");
         }
 
-        try {
-            EsSyncMessage message = new EsSyncMessage(action, documentId, knowledgeBaseId);
-            String jsonStr = JSON.toJSONString(message);
-            log.info("[MQ同步] 发送同步消息: queue={}, action={}, docId={}", QUEUE_NAME, action, documentId);
-            jmsTemplate.convertAndSend(QUEUE_NAME, jsonStr);
-        } catch (Exception e) {
-            log.error("[MQ同步] 发送同步消息异常: docId={}", documentId, e);
-        }
+        EsSyncMessage message = new EsSyncMessage(taskId, action, documentId, knowledgeBaseId);
+        String jsonStr = JSON.toJSONString(message);
+        log.info("[MQ同步] 发送同步消息: queue={}, taskId={}, action={}, docId={}",
+                QUEUE_NAME, taskId, action, documentId);
+        // 发送失败必须向上抛出，让 Outbox 保持可重试状态。
+        jmsTemplate.convertAndSend(QUEUE_NAME, jsonStr);
     }
 }
-//update-end---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------

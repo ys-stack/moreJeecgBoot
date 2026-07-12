@@ -2,6 +2,7 @@ package org.jeecg.modules.airag.practice.aspect.breaker;
 
 import lombok.extern.slf4j.Slf4j;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -24,9 +25,13 @@ public class LocalCircuitBreaker {
     private final AtomicReference<State> state = new AtomicReference<>(State.CLOSED);
     private final AtomicInteger failureCount = new AtomicInteger(0);
     private final AtomicInteger successCount = new AtomicInteger(0);
+    private final AtomicBoolean halfOpenProbeInFlight = new AtomicBoolean(false);
     private volatile long lastStateChangedTime = System.currentTimeMillis();
 
     public LocalCircuitBreaker(String name, int failureThreshold, long halfOpenTimeoutMs) {
+        if (failureThreshold <= 0 || halfOpenTimeoutMs <= 0) {
+            throw new IllegalArgumentException("failureThreshold 和 halfOpenTimeoutMs 必须大于 0");
+        }
         this.name = name;
         this.failureThreshold = failureThreshold;
         this.halfOpenTimeoutMs = halfOpenTimeoutMs;
@@ -45,10 +50,15 @@ public class LocalCircuitBreaker {
                     lastStateChangedTime = System.currentTimeMillis();
                     successCount.set(0);
                     failureCount.set(0);
+                    halfOpenProbeInFlight.set(true);
                     return true;
                 }
             }
             return false;
+        }
+        if (current == State.HALF_OPEN) {
+            // 半开状态每次只允许一个探测请求，防止恢复瞬间流量击穿下游。
+            return halfOpenProbeInFlight.compareAndSet(false, true);
         }
         return true;
     }
@@ -67,6 +77,7 @@ public class LocalCircuitBreaker {
                     failureCount.set(0);
                 }
             }
+            halfOpenProbeInFlight.set(false);
         } else if (current == State.CLOSED) {
             failureCount.set(0); // 正常闭合状态下，成功时清空连续失败计数
         }
@@ -91,6 +102,7 @@ public class LocalCircuitBreaker {
                 log.error("[熔断器-{}] 状态切换: HALF_OPEN -> OPEN (半开状态下请求发生异常，重新进入熔断)", name);
                 lastStateChangedTime = System.currentTimeMillis();
             }
+            halfOpenProbeInFlight.set(false);
         }
     }
 

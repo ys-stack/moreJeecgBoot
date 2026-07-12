@@ -24,7 +24,7 @@ public @interface CircuitBreaker {
     int failureThreshold() default 5;
 
     /**
-     * 熔断开启后的冷却时间（毫秒），默认 10000 毫秒（10秒）
+     * 熔断开启后的冷却时间（毫秒），不是单次调用超时。
      */
     long timeout() default 10000;
 
@@ -32,5 +32,8 @@ public @interface CircuitBreaker {
      * 降级方法名称，可选
      */
     String fallbackMethod() default "";
+
+    /** 不计入熔断统计的异常类型。 */
+    Class<? extends Throwable>[] ignoreExceptions() default {IllegalArgumentException.class};
 }
 //update-end---author:ys ---date:2026-07-10  for：MySQL-ES异步同步-----------

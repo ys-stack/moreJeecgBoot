@@ -15,6 +15,7 @@ import org.jeecg.modules.airag.practice.doc.service.IAiDocumentChunkService;
 import org.jeecg.modules.airag.practice.doc.vo.DocumentChunkVO;
 import org.jeecg.modules.airag.practice.doc.vo.DocumentUploadResultVO;
 import org.jeecg.modules.airag.practice.sync.dto.EsSyncMessage;
+import org.jeecg.modules.airag.practice.sync.entity.EsSyncTask;
 import org.jeecg.modules.airag.practice.sync.producer.EsSyncProducer;
 import org.jeecg.modules.airag.practice.sync.service.IEsSyncTaskService;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -152,12 +153,11 @@ public class AiDocumentChunkServiceImpl
 
         // ========== 9. 自动向量化异步同步至 ES (Transactional Outbox 模式) ==========
         if (!entities.isEmpty()) {
-            esSyncTaskService.saveTask(EsSyncMessage.ACTION_INDEX, documentId, kb.getId());
+            EsSyncTask task = esSyncTaskService.saveTask(EsSyncMessage.ACTION_INDEX, documentId, kb.getId());
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    esSyncProducer.sendSyncMessage(EsSyncMessage.ACTION_INDEX, documentId, kb.getId());
-                    log.info("已在事务提交后向 ActiveMQ 发送文档异步向量化消息: documentId={}", documentId);
+                    dispatchBestEffort(task);
                 }
             });
         }
@@ -193,20 +193,16 @@ public class AiDocumentChunkServiceImpl
     public int deleteDocumentAndChunks(String documentId) {
         // 删除分片
         int deleted = deleteChunksByDocumentId(documentId);
-
-//update-begin---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
         // 1. 插入本地删除同步任务至 Outbox 表
-        esSyncTaskService.saveTask(EsSyncMessage.ACTION_DELETE, documentId, null);
+        EsSyncTask task = esSyncTaskService.saveTask(EsSyncMessage.ACTION_DELETE, documentId, null);
 
         // 2. 事务提交后发送异步删除消息到 ActiveMQ 队列进行 ES 数据清理
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                esSyncProducer.sendSyncMessage(EsSyncMessage.ACTION_DELETE, documentId, null);
-                log.info("已在事务提交后发送异步删除消息到 ActiveMQ: documentId={}", documentId);
+                dispatchBestEffort(task);
             }
         });
-//update-end---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
 
         // 删除文档记录
         AiDocument doc = aiDocumentMapper.selectById(documentId);
@@ -218,6 +214,33 @@ public class AiDocumentChunkServiceImpl
         }
 
         return deleted;
+    }
+
+    /**
+     * 业务事务提交后尽力投递 ES 同步消息。
+     * <p>
+     * 这里不把 MQ 发送和 MySQL 状态更新伪装成一个本地事务：
+     * MQ 首次投递失败时任务保持 PENDING，交给 Outbox 定时补偿；
+     * MQ 已发送但状态更新失败时允许后续重复投递，消费者侧负责幂等。
+     */
+    private void dispatchBestEffort(EsSyncTask task) {
+        try {
+            esSyncProducer.sendSyncMessage(task.getId(), task.getAction(), task.getDocumentId(), task.getKnowledgeBaseId());
+        } catch (Exception e) {
+            // 业务事务已经提交，发送失败时保留 PENDING，交给 Outbox 定时补偿。
+            log.error("事务已提交但 ES 同步消息首次投递失败，等待 Outbox 补偿: taskId={}, docId={}",
+                    task.getId(), task.getDocumentId(), e);
+            return;
+        }
+
+        try {
+            esSyncTaskService.markDispatched(task.getId());
+            log.info("已在事务提交后投递 ES 同步消息: taskId={}, docId={}", task.getId(), task.getDocumentId());
+        } catch (Exception e) {
+            // MQ 已发送但状态更新失败时，可能被 Outbox 重投；消费者必须保证幂等。
+            log.error("ES 同步消息已发送，但任务状态更新失败，等待 Outbox 幂等补偿: taskId={}, docId={}",
+                    task.getId(), task.getDocumentId(), e);
+        }
     }
 
     @Override

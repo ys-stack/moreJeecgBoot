@@ -424,6 +424,12 @@ justauth:
 # API Key、ES 密码等敏感信息不要写死到 yml，使用环境变量或启动参数注入。
 # =============================================
 practice:
+  mq:
+    concurrency: ${PRACTICE_MQ_CONCURRENCY:2}
+  es-sync:
+    max-dispatch-attempts: ${PRACTICE_ES_SYNC_MAX_ATTEMPTS:10}
+    dispatch-timeout-ms: ${PRACTICE_ES_SYNC_DISPATCH_TIMEOUT_MS:600000}
+    success-retention-days: ${PRACTICE_ES_SYNC_RETENTION_DAYS:7}
   ai:
     base-url: ${PRACTICE_AI_BASE_URL:}
     api-key: ${PRACTICE_AI_API_KEY:}

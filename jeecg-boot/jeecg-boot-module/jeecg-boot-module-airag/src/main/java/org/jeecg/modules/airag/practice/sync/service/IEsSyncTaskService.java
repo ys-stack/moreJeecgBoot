@@ -27,7 +27,7 @@ public interface IEsSyncTaskService extends IService<EsSyncTask> {
      * @param documentId 文档ID
      * @param action     操作类型
      */
-    void completeTask(String documentId, String action);
+    void completeTask(String taskId);
 
     /**
      * 标记同步任务为失败并记录错误信息
@@ -36,5 +36,13 @@ public interface IEsSyncTaskService extends IService<EsSyncTask> {
      * @param action     操作类型
      * @param errorMsg   异常信息
      */
-    void failTask(String documentId, String action, String errorMsg);
+    void failTask(String taskId, String errorMsg);
+
+    /**
+     * 以乐观条件抢占待投递任务，避免多个应用实例重复投递。
+     */
+    boolean claimTask(EsSyncTask task);
+
+    /** 标记消息已成功交给 MQ。 */
+    void markDispatched(String taskId);
 }

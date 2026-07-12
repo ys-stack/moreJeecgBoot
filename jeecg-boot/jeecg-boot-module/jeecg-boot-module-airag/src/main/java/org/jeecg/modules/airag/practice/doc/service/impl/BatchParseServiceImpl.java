@@ -17,10 +17,10 @@ import org.jeecg.modules.airag.practice.doc.vo.*;
 import org.jeecg.modules.airag.practice.threadpool.PracticeThreadPool;
 //update-begin---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
 import org.jeecg.modules.airag.practice.sync.dto.EsSyncMessage;
+import org.jeecg.modules.airag.practice.sync.entity.EsSyncTask;
 import org.jeecg.modules.airag.practice.sync.producer.EsSyncProducer;
 import org.jeecg.modules.airag.practice.sync.service.IEsSyncTaskService;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionTemplate;
 //update-end---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
 import org.jeecg.modules.airag.practice.vector.service.VectorStoreService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -82,6 +82,8 @@ public class BatchParseServiceImpl implements BatchParseService {
     private EsSyncProducer esSyncProducer;
     @Autowired
     private IEsSyncTaskService esSyncTaskService;
+    @Resource
+    private TransactionTemplate transactionTemplate;
 //update-end---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
 
     @Resource
@@ -178,14 +180,16 @@ public class BatchParseServiceImpl implements BatchParseService {
         String fileName = file.fileName();
         ProcessResult pr = new ProcessResult();
         pr.fileName = fileName;
+        String documentId = null;
+        AiDocument doc = null;
 
         try {
             // ---------- 校验 ----------
             validateFile(file);
 
             // ---------- 创建 AiDocument（status=parsing） ----------
-            String documentId = UUID.randomUUID().toString().replace("-", "");
-            AiDocument doc = new AiDocument()
+            documentId = UUID.randomUUID().toString().replace("-", "");
+            doc = new AiDocument()
                     .setId(documentId)
                     .setKnowledgeBaseId(kbId)
                     .setTitle(extractTitle(fileName))
@@ -204,47 +208,41 @@ public class BatchParseServiceImpl implements BatchParseService {
             // ---------- 调 Python 服务解析 ----------
             PythonParseResult parseResult = docParserClient.parseFile(file);
 
-            // ---------- 转换并存储分片 ----------
+            // ---------- 转换分片 ----------
             List<AiDocumentChunk> chunkEntities = convertToEntities(
                     parseResult.getChunks(), documentId, fileName, filePath);
-            if (!chunkEntities.isEmpty()) {
-                for (AiDocumentChunk chunk : chunkEntities) {
-                    aiDocumentChunkMapper.insert(chunk);
-                }
-                log.info("分片存储完成: documentId={}, chunks={}", documentId, chunkEntities.size());
-            }
 
-            // ---------- 更新 AiDocument 状态 ----------
             int totalChars = parseResult.getTotalChars() != null ? parseResult.getTotalChars() : 0;
             int chunkCount = parseResult.getChunkCount() != null ? parseResult.getChunkCount() : chunkEntities.size();
-            doc.setStatus("completed")
-                    .setChunkCount(chunkCount)
-                    .setTotalChars(totalChars)
-                    .setUpdateTime(new Date());
-            aiDocumentMapper.updateById(doc);
 
-            // ---------- 更新知识库计数 ----------
-            updateKnowledgeBaseCounts(kbId);
-
-            // ---------- 异步发送同步消息至 ActiveMQ 队列 (Transactional Outbox 模式) ----------
-//update-begin---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
-            if (!chunkEntities.isEmpty()) {
-                esSyncTaskService.saveTask(EsSyncMessage.ACTION_INDEX, documentId, kbId);
-                if (TransactionSynchronizationManager.isSynchronizationActive()) {
-                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                        @Override
-                        public void afterCommit() {
-                            esSyncProducer.sendSyncMessage(EsSyncMessage.ACTION_INDEX, documentId, kbId);
-                            log.info("已在事务提交后发送异步向量化同步消息: documentId={}", documentId);
+            // 分片、文档完成状态和 Outbox 必须在同一事务提交。
+            final AiDocument completedDoc = doc;
+            final String completedDocumentId = documentId;
+            EsSyncTask task = transactionTemplate.execute(status -> {
+                if (!chunkEntities.isEmpty()) {
+                    for (AiDocumentChunk chunk : chunkEntities) {
+                        int rows = aiDocumentChunkMapper.insert(chunk);
+                        if (rows != 1) {
+                            throw new IllegalStateException("文档分片插入失败: chunkId=" + chunk.getId());
                         }
-                    });
-                } else {
-                    esSyncProducer.sendSyncMessage(EsSyncMessage.ACTION_INDEX, documentId, kbId);
-                    log.info("当前无活动事务，已直接发送异步向量化同步消息: documentId={}", documentId);
+                    }
+                    log.info("分片存储完成: documentId={}, chunks={}", completedDocumentId, chunkEntities.size());
                 }
+
+                completedDoc.setStatus("completed")
+                        .setChunkCount(chunkCount)
+                        .setTotalChars(totalChars)
+                        .setUpdateTime(new Date());
+                aiDocumentMapper.updateById(completedDoc);
+                updateKnowledgeBaseCounts(kbId);
+
+                return chunkEntities.isEmpty() ? null
+                        : esSyncTaskService.saveTask(EsSyncMessage.ACTION_INDEX, completedDocumentId, kbId);
+            });
+
+            if (task != null) {
+                dispatchBestEffort(task);
             }
-//update-end---author:ys ---date:2026-07-09  for：MySQL-ES异步同步-----------
-            int vectorizedCount = 0;
 
             // ---------- 构建返回结果 ----------
             List<DocumentChunkVO> chunkPreview = parseResult.getChunks().stream()
@@ -276,9 +274,38 @@ public class BatchParseServiceImpl implements BatchParseService {
 
         } catch (Exception e) {
             log.error("文件处理失败: fileName={}, error={}", fileName, e.getMessage(), e);
+            if (doc != null) {
+                doc.setStatus("failed").setErrorMsg(e.getMessage()).setUpdateTime(new Date());
+                aiDocumentMapper.updateById(doc);
+            }
             pr.success = false;
             pr.errorMessage = e.getMessage();
             return pr;
+        }
+    }
+
+    /**
+     * 业务数据和 Outbox 任务已提交后，尽力将同步任务投递到 MQ。
+     * <p>
+     * MQ 不参与 MySQL 本地事务：首次投递失败时任务保持 PENDING，
+     * 后续由 Outbox 对账任务扫描并补偿；如果 MQ 已发送但状态更新失败，
+     * 可能产生重复投递，消费者需要按 taskId / documentId 做幂等处理。
+     */
+    private void dispatchBestEffort(EsSyncTask task) {
+        try {
+            esSyncProducer.sendSyncMessage(task.getId(), task.getAction(), task.getDocumentId(), task.getKnowledgeBaseId());
+        } catch (Exception e) {
+            log.error("批量上传 ES 同步消息首次投递失败，任务保持待补偿状态: taskId={}, docId={}",
+                    task.getId(), task.getDocumentId(), e);
+            return;
+        }
+
+        try {
+            esSyncTaskService.markDispatched(task.getId());
+            log.info("批量上传 ES 同步消息已投递: taskId={}, docId={}", task.getId(), task.getDocumentId());
+        } catch (Exception e) {
+            log.error("批量上传 ES 同步消息已发送，但任务状态更新失败，等待 Outbox 幂等补偿: taskId={}, docId={}",
+                    task.getId(), task.getDocumentId(), e);
         }
     }
 

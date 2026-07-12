@@ -55,7 +55,10 @@ public class CircuitBreakerAspect {
             // 调用成功，通知状态机
             breaker.onSuccess();
             return result;
-        } catch (Throwable t) {
+        } catch (Exception t) {
+            if (isIgnored(t, cbAnnotation.ignoreExceptions())) {
+                throw t;
+            }
             // 调用发生异常，通知状态机
             breaker.onFailure();
             log.error("[熔断监测] 熔断器 [{}] 监测到业务调用异常: {}", breakerName, t.getMessage());
@@ -66,6 +69,15 @@ public class CircuitBreakerAspect {
             }
             throw t;
         }
+    }
+
+    private boolean isIgnored(Throwable throwable, Class<? extends Throwable>[] ignoredTypes) {
+        for (Class<? extends Throwable> ignoredType : ignoredTypes) {
+            if (ignoredType.isInstance(throwable)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
