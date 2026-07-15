@@ -1,220 +1,259 @@
 package org.jeecg.modules.airag.practice.vector.service;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.codec.digest.DigestUtils;
-import org.jeecg.modules.airag.practice.vector.config.PracticeVectorConfig;
-import org.springframework.http.*;
-import org.springframework.retry.annotation.Recover;
-import org.springframework.retry.annotation.Retryable;
-import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-
 import jakarta.annotation.Resource;
-import java.time.Duration;
-import java.util.*;
+import lombok.extern.slf4j.Slf4j;
+import org.jeecg.modules.airag.practice.cache.util.FloatVectorCodec;
+import org.jeecg.modules.airag.practice.cache.util.PracticeCacheKeyHasher;
+import org.jeecg.modules.airag.practice.cache.metrics.PracticeCacheMetrics;
+import org.jeecg.modules.airag.practice.vector.cache.EmbeddingCacheContext;
+import org.jeecg.modules.airag.practice.vector.cache.service.IEmbeddingVectorCacheService;
+import org.jeecg.modules.airag.practice.vector.config.PracticeVectorConfig;
+import org.springframework.stereotype.Service;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
-/**
- * Embedding 服务（带缓存 + 重试降级）
- *
- * 调用硅基流动 bge-m3 模型（OpenAI 兼容接口）将文本转为向量。
- * - Caffeine 本地缓存：相同文本 24h 内不重复调用 API
- * - Spring Retry：API 失败自动重试 3 次（指数退避 1s→2s→4s），全部失败降级返回零向量
- *
- * @Author: jeecg-boot
- * @Date: 2026-06-16
- */
 @Slf4j
 @Service
 public class EmbeddingService {
+
+    private static final long LOCK_WAIT_MILLIS = 2000L;
 
     @Resource
     private PracticeVectorConfig config;
 
     @Resource
-    private RestTemplate practiceEmbedRestTemplate;
+    private PracticeCacheKeyHasher cacheKeyHasher;
 
-    /**
-     * 本地缓存：text MD5 → float[]
-     * 最多 5000 条，24h 过期，约占用 20MB 内存
-     */
-    private final Cache<String, float[]> embedCache = Caffeine.newBuilder()
-            .maximumSize(5000)
-            .expireAfterWrite(Duration.ofHours(24))
-            .build();
+    @Resource
+    private IEmbeddingVectorCacheService embeddingCacheService;
 
-    // ==================== 公开方法 ====================
+    @Resource
+    private EmbeddingApiClient embeddingApiClient;
 
-    /**
-     * 单条文本 Embedding（带缓存）
-     *
-     * @param text 待向量化文本
-     * @return 1024维浮点向量
-     */
-    public float[] embed(String text) {
-        if (text == null || text.isBlank()) {
-            throw new IllegalArgumentException("Embedding 输入文本不能为空");
-        }
+    @Resource
+    private PracticeCacheMetrics cacheMetrics;
 
-        String cacheKey = DigestUtils.md5Hex(text);
-        float[] cached = embedCache.getIfPresent(cacheKey);
-        if (cached != null) {
-            log.debug("Embedding 缓存命中: key={}", cacheKey.substring(0, 8));
-            return cached;
-        }
+    public float[] embed(
+            String text,
+            EmbeddingCacheContext context) {
 
-        List<float[]> results = embedBatch(List.of(text));
-        float[] vector = results.get(0);
+        List<float[]> vectors = embedBatch(
+                Collections.singletonList(text),
+                context
+        );
 
-        if (isZeroVector(vector)) {
-            log.warn("Embedding 降级：返回零向量，检索结果将为空");
-        }
-
-        return vector;
+        return vectors.get(0);
     }
 
-    /**
-     * 批量文本 Embedding（带缓存 + 重试降级）
-     *
-     * 缓存命中的直接返回，未命中的调 API，API 全部失败则降级返回零向量。
-     *
-     * @param texts 文本列表
-     * @return 对应的向量列表（顺序与输入一致）
-     */
-    public List<float[]> embedBatch(List<String> texts) {
+    public List<float[]> embedBatch(
+            List<String> texts,
+            EmbeddingCacheContext context) {
+
         if (texts == null || texts.isEmpty()) {
             return Collections.emptyList();
         }
 
-        // 分离缓存命中的和未命中的
+        if (context == null) {
+            throw new IllegalArgumentException(
+                    "EmbeddingCacheContext 不能为空"
+            );
+        }
+
+        String modelName = config.getEmbed().getModelName();
+        String modelVersion = config.getEmbed().getModelVersion();
+        String normalizationVersion =
+                config.getEmbed().getNormalizationVersion();
+        int dimensions = config.getEmbed().getDimensions();
+
+        List<String> canonicalTexts = new ArrayList<>(texts.size());
+        List<String> cacheKeys = new ArrayList<>(texts.size());
         List<float[]> results = new ArrayList<>(texts.size());
+
+        for (String text : texts) {
+            String canonicalText =
+                    cacheKeyHasher.normalizeEmbeddingText(text);
+
+            if (canonicalText.isBlank()) {
+                throw new IllegalArgumentException(
+                        "Embedding 输入文本不能为空"
+                );
+            }
+
+            canonicalTexts.add(canonicalText);
+
+            cacheKeys.add(
+                    embeddingCacheService.buildCacheKey(
+                            context,
+                            canonicalText,
+                            modelName,
+                            modelVersion,
+                            normalizationVersion,
+                            dimensions
+                    )
+            );
+
+            results.add(null);
+        }
+
         List<Integer> missIndexes = new ArrayList<>();
-        List<String> missTexts = new ArrayList<>();
 
-        for (int i = 0; i < texts.size(); i++) {
-            String text = texts.get(i);
-            String cacheKey = DigestUtils.md5Hex(text);
-            float[] cached = embedCache.getIfPresent(cacheKey);
-            if (cached != null) {
-                results.add(cached);
-            } else {
-                results.add(null);
+        for (int i = 0; i < canonicalTexts.size(); i++) {
+            float[] cached = embeddingCacheService.get(
+                    context,
+                    canonicalTexts.get(i),
+                    modelName,
+                    modelVersion,
+                    normalizationVersion,
+                    dimensions
+            );
+
+            if (cached == null) {
+                cacheMetrics.recordMiss("embedding");
                 missIndexes.add(i);
-                missTexts.add(text);
+            } else {
+                results.set(i, cached);
             }
         }
 
-        // 只对未命中的调 API（带重试 + 降级）
-        if (!missTexts.isEmpty()) {
-            List<float[]> apiResults = callEmbeddingApi(missTexts);
-            for (int j = 0; j < missIndexes.size(); j++) {
-                int idx = missIndexes.get(j);
-                float[] vec = apiResults.get(j);
-                results.set(idx, vec);
-                // 写入缓存（降级的零向量也缓存，避免反复重试）
-                embedCache.put(DigestUtils.md5Hex(missTexts.get(j)), vec);
+        Map<Integer, String> ownedLocks = new LinkedHashMap<>();
+        List<Integer> waitingIndexes = new ArrayList<>();
+
+        for (Integer index : missIndexes) {
+            String token = UUID.randomUUID().toString();
+            String cacheKey = cacheKeys.get(index);
+
+            if (embeddingCacheService.tryLock(cacheKey, token)) {
+                ownedLocks.put(index, token);
+            } else {
+                waitingIndexes.add(index);
             }
         }
 
-        log.info("Embedding 完成: 总数={}, 缓存命中={}, API调用={}",
-                texts.size(), texts.size() - missTexts.size(), missTexts.size());
+        try {
+            if (!ownedLocks.isEmpty()) {
+                List<Integer> ownerIndexes =
+                        new ArrayList<>(ownedLocks.keySet());
+
+                List<String> apiTexts = ownerIndexes.stream()
+                        .map(canonicalTexts::get)
+                        .toList();
+
+                List<float[]> apiVectors =
+                        embeddingApiClient.embedBatch(apiTexts);
+                cacheMetrics.recordEmbeddingApiRequest(apiTexts.size());
+
+                if (apiVectors.size() != ownerIndexes.size()) {
+                    throw new IllegalStateException(
+                            "Embedding API 返回数量与请求数量不一致"
+                    );
+                }
+
+                for (int i = 0; i < ownerIndexes.size(); i++) {
+                    int resultIndex = ownerIndexes.get(i);
+                    float[] vector = apiVectors.get(i);
+
+                    FloatVectorCodec.validate(vector, dimensions);
+
+                    embeddingCacheService.put(
+                            context,
+                            canonicalTexts.get(resultIndex),
+                            modelName,
+                            modelVersion,
+                            normalizationVersion,
+                            dimensions,
+                            vector
+                    );
+
+                    results.set(resultIndex, vector);
+                }
+            }
+        } finally {
+            ownedLocks.forEach((index, token) ->
+                    embeddingCacheService.unlock(
+                            cacheKeys.get(index),
+                            token
+                    )
+            );
+        }
+
+        List<Integer> unresolvedIndexes = new ArrayList<>();
+
+        for (Integer index : waitingIndexes) {
+            float[] vector = embeddingCacheService.waitForValue(
+                    context,
+                    canonicalTexts.get(index),
+                    modelName,
+                    modelVersion,
+                    normalizationVersion,
+                    dimensions,
+                    LOCK_WAIT_MILLIS
+            );
+
+            if (vector == null) {
+                unresolvedIndexes.add(index);
+            } else {
+                results.set(index, vector);
+            }
+        }
+
+        if (!unresolvedIndexes.isEmpty()) {
+            List<String> fallbackTexts = unresolvedIndexes.stream()
+                    .map(canonicalTexts::get)
+                    .toList();
+
+            List<float[]> fallbackVectors =
+                    embeddingApiClient.embedBatch(fallbackTexts);
+            cacheMetrics.recordEmbeddingApiRequest(fallbackTexts.size());
+
+            if (fallbackVectors.size() != unresolvedIndexes.size()) {
+                throw new IllegalStateException(
+                        "Embedding API 降级返回数量与请求数量不一致"
+                );
+            }
+
+            for (int i = 0; i < unresolvedIndexes.size(); i++) {
+                int resultIndex = unresolvedIndexes.get(i);
+                float[] vector = fallbackVectors.get(i);
+
+                FloatVectorCodec.validate(vector, dimensions);
+
+                embeddingCacheService.put(
+                        context,
+                        canonicalTexts.get(resultIndex),
+                        modelName,
+                        modelVersion,
+                        normalizationVersion,
+                        dimensions,
+                        vector
+                );
+
+                results.set(resultIndex, vector);
+            }
+        }
+
+        for (int i = 0; i < results.size(); i++) {
+            float[] vector = results.get(i);
+
+            if (vector == null) {
+                throw new IllegalStateException(
+                        "Embedding 结果为空: index=" + i
+                );
+            }
+
+            FloatVectorCodec.validate(vector, dimensions);
+        }
+
+        log.info(
+                "Embedding 完成: total={}, hit={}, api={}",
+                texts.size(),
+                texts.size() - missIndexes.size(),
+                ownedLocks.size() + unresolvedIndexes.size()
+        );
+
         return results;
-    }
-
-    // ==================== API 调用（带重试） ====================
-
-    /**
-     * 实际调用 Embedding API，失败自动重试 3 次（1s → 2s → 4s）
-     *
-     * @Retryable 通过 AOP 代理生效，embedBatch() 调用此方法时走的是代理对象，重试正常触发。
-     */
-    @Retryable(
-            retryFor = {RuntimeException.class},
-            maxAttempts = 3,
-            backoff = @org.springframework.retry.annotation.Backoff(delay = 1000, multiplier = 2)
-    )
-    public List<float[]> callEmbeddingApi(List<String> texts) {
-        // 构建请求体（OpenAI 兼容格式）
-        JSONObject requestBody = new JSONObject();
-        requestBody.put("model", config.getEmbed().getModelName());
-        requestBody.put("input", texts);
-
-        // 设置请求头
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(config.getEmbed().getApiKey());
-
-        String url = config.getEmbed().getBaseUrl() + "/embeddings";
-        log.info("调用 Embedding API: url={}, model={}, 文本数={}", url, config.getEmbed().getModelName(), texts.size());
-
-        HttpEntity<String> entity = new HttpEntity<>(requestBody.toJSONString(), headers);
-        ResponseEntity<String> response = practiceEmbedRestTemplate.exchange(url, HttpMethod.POST, entity, String.class);
-
-        if (response.getStatusCode() != HttpStatus.OK || response.getBody() == null) {
-            throw new RuntimeException("Embedding API 返回异常: status=" + response.getStatusCode());
-        }
-
-        // 解析响应
-        JSONObject respJson = JSON.parseObject(response.getBody());
-        JSONArray dataArray = respJson.getJSONArray("data");
-
-        if (dataArray == null || dataArray.size() != texts.size()) {
-            throw new RuntimeException("Embedding 返回数量不匹配: 期望=" + texts.size()
-                    + ", 实际=" + (dataArray == null ? 0 : dataArray.size()));
-        }
-
-        // 按 index 排序（API 返回可能乱序）并提取向量
-        List<JSONObject> sortedData = new ArrayList<>();
-        for (int i = 0; i < dataArray.size(); i++) {
-            sortedData.add(dataArray.getJSONObject(i));
-        }
-        sortedData.sort(Comparator.comparingInt(o -> o.getIntValue("index")));
-
-        List<float[]> vectors = new ArrayList<>(dataArray.size());
-        for (JSONObject item : sortedData) {
-            JSONArray embedding = item.getJSONArray("embedding");
-            float[] vec = new float[embedding.size()];
-            for (int j = 0; j < embedding.size(); j++) {
-                vec[j] = embedding.getFloatValue(j);
-            }
-            vectors.add(vec);
-        }
-
-        // 记录 token 用量
-        JSONObject usage = respJson.getJSONObject("usage");
-        if (usage != null) {
-            log.info("Embedding API 成功: 文本数={}, tokens={}", texts.size(), usage.getIntValue("total_tokens"));
-        }
-
-        return vectors;
-    }
-
-    /**
-     * 重试耗尽后的降级方法：抛出异常（不返回零向量，避免污染 ES 索引）
-     *
-     * 零向量的 cosine similarity 无意义，写入 ES 后会导致检索结果全部匹配。
-     * 抛出异常让上层感知失败，BatchParse 会将文档标记为 vectorize_failed。
-     * 参数和返回值必须与 callEmbeddingApi 一致
-     */
-    @Recover
-    public List<float[]> callEmbeddingApiRecover(RuntimeException e, List<String> texts) {
-        log.error("Embedding API 重试耗尽，拒绝降级（零向量会污染索引），文本数={}", texts.size(), e);
-        throw new RuntimeException("Embedding API 重试耗尽，无法向量化: " + e.getMessage(), e);
-    }
-
-    // ==================== 内部方法 ====================
-
-    /**
-     * 判断是否为全零向量（降级标记）
-     */
-    private boolean isZeroVector(float[] vec) {
-        for (float v : vec) {
-            if (v != 0.0f) return false;
-        }
-        return true;
     }
 }

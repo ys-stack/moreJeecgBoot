@@ -5,6 +5,7 @@ import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import lombok.extern.slf4j.Slf4j;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocumentChunk;
+import org.jeecg.modules.airag.practice.vector.cache.EmbeddingCacheContext;
 import org.jeecg.modules.airag.practice.vector.config.PracticeVectorConfig;
 import org.jeecg.modules.airag.practice.vector.vo.VectorSearchResultVO;
 import org.jeecg.modules.airag.practice.aspect.annotation.CircuitBreaker;
@@ -127,7 +128,11 @@ public class VectorStoreService {
      * @param chunks          分片列表（MySQL 中的记录）
      * @return 成功写入的数量
      */
-    public int vectorizeAndStore(String documentId, String knowledgeBaseId, List<AiDocumentChunk> chunks) {
+    public int vectorizeAndStore(
+            String documentId,
+            String knowledgeBaseId,
+            List<AiDocumentChunk> chunks,
+            String tenantId) {
         if (chunks == null || chunks.isEmpty()) {
             return 0;
         }
@@ -140,7 +145,11 @@ public class VectorStoreService {
                 .collect(Collectors.toList());
 
         // 批量 Embedding（分批，每批最多20条，避免超时）
-        List<float[]> allVectors = batchEmbed(texts, 20);
+        List<float[]> allVectors = batchEmbed(
+                texts,
+                20,
+                EmbeddingCacheContext.tenant(tenantId)
+        );
 
         // 构建 ES bulk 请求
         StringBuilder bulkBody = new StringBuilder();
@@ -229,7 +238,7 @@ public class VectorStoreService {
      * @return 相似分片列表（按 Rerank 分数降序）
      */
     @CircuitBreaker(value = "es_vector_search", failureThreshold = 5, timeout = 10000)
-    public List<VectorSearchResultVO> search(String query, int topK, String knowledgeBaseId) {
+    public List<VectorSearchResultVO> search(String query, int topK, String knowledgeBaseId, String tenantId) {
         // 构建单知识库 filter（term）
         JSONObject filter = null;
         if (knowledgeBaseId != null && !knowledgeBaseId.isBlank()) {
@@ -238,7 +247,13 @@ public class VectorStoreService {
             filter = new JSONObject();
             filter.put("term", term);
         }
-        return executeSearch(query, topK, filter, "向量检索");
+        return executeSearch(
+                query,
+                topK,
+                filter,
+                "向量检索",
+                EmbeddingCacheContext.tenant(tenantId)
+        );
     }
 
     /**
@@ -250,19 +265,29 @@ public class VectorStoreService {
      * @return 相似分片列表
      */
     @CircuitBreaker(value = "es_vector_search_multi_kb", failureThreshold = 5, timeout = 10000)
-    public List<VectorSearchResultVO> searchByKnowledgeBaseIds(String query, int topK, List<String> knowledgeBaseIds) {
+    public List<VectorSearchResultVO> searchByKnowledgeBaseIds(
+            String query,
+            int topK,
+            List<String> knowledgeBaseIds,
+            String tenantId) {
         if (knowledgeBaseIds == null || knowledgeBaseIds.isEmpty()) {
             return Collections.emptyList();
         }
         if (knowledgeBaseIds.size() == 1) {
-            return search(query, topK, knowledgeBaseIds.get(0));
+            return search(query, topK, knowledgeBaseIds.get(0), tenantId);
         }
         // 多知识库用 terms filter
         JSONObject terms = new JSONObject();
         terms.put("knowledge_base_id", knowledgeBaseIds);
         JSONObject filter = new JSONObject();
         filter.put("terms", terms);
-        return executeSearch(query, topK, filter, "多知识库向量检索");
+        return executeSearch(
+                query,
+                topK,
+                filter,
+                "多知识库向量检索",
+                EmbeddingCacheContext.tenant(tenantId)
+        );
     }
 
     /**
@@ -274,10 +299,15 @@ public class VectorStoreService {
      * @param logTag  日志标签
      * @return 相似分片列表
      */
-    private List<VectorSearchResultVO> executeSearch(String query, int topK, JSONObject filter, String logTag) {
+    private List<VectorSearchResultVO> executeSearch(
+            String query,
+            int topK,
+            JSONObject filter,
+            String logTag,
+            EmbeddingCacheContext embeddingContext) {
         ensureIndex();
 
-        float[] queryVector = embeddingService.embed(query);
+        float[] queryVector = embeddingService.embed(query, embeddingContext);
 
         int recallSize = topK * 4;
         List<VectorSearchResultVO> candidates = knnSearch(queryVector, recallSize, filter);
@@ -301,7 +331,8 @@ public class VectorStoreService {
             }
         }
 
-        log.info("{}完成: query='{}', kNN召回={}, Rerank返回={}", logTag, query, candidates.size(), finalResults.size());
+        log.info("{}完成: queryLength={}, kNN召回={}, Rerank返回={}",
+                logTag, query == null ? 0 : query.length(), candidates.size(), finalResults.size());
         return finalResults;
     }
 
@@ -446,14 +477,17 @@ public class VectorStoreService {
     /**
      * 分批 Embedding，每批 maxSize 条
      */
-    private List<float[]> batchEmbed(List<String> texts, int maxSize) {
+    private List<float[]> batchEmbed(
+            List<String> texts,
+            int maxSize,
+            EmbeddingCacheContext embeddingContext) {
         List<float[]> allVectors = new ArrayList<>();
         for (int i = 0; i < texts.size(); i += maxSize) {
             int end = Math.min(i + maxSize, texts.size());
             List<String> batch = texts.subList(i, end);
             log.info("Embedding 批次 {}/{}: {}条", (i / maxSize) + 1,
                     (int) Math.ceil((double) texts.size() / maxSize), batch.size());
-            List<float[]> batchVectors = embeddingService.embedBatch(batch);
+            List<float[]> batchVectors = embeddingService.embedBatch(batch, embeddingContext);
             allVectors.addAll(batchVectors);
         }
         return allVectors;

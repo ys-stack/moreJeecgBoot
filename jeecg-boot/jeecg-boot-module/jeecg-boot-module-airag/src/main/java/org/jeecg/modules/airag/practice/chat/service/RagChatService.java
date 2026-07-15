@@ -11,6 +11,10 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.shiro.SecurityUtils;
 import org.jeecg.common.system.vo.LoginUser;
+import org.jeecg.modules.airag.practice.cache.context.RagAnswerCacheContext;
+import org.jeecg.modules.airag.practice.cache.entity.FaqCacheItem;
+import org.jeecg.modules.airag.practice.cache.service.IKnowledgeCacheVersionService;
+import org.jeecg.modules.airag.practice.cache.service.IRagAnswerCacheService;
 import org.jeecg.modules.airag.practice.chat.entity.AiChatMessage;
 import org.jeecg.modules.airag.practice.chat.entity.AiChatSession;
 import org.jeecg.modules.airag.practice.chat.mapper.AiChatMessageMapper;
@@ -26,6 +30,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.ObjectUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -61,6 +67,9 @@ public class RagChatService {
     @Value("${practice.ai.model-name:deepseek-chat}")
     private String modelName;
 
+    @Value("${practice.rag.prompt-version:rag-prompt-v1}")
+    private String ragPromptVersion;
+
     @Resource
     private VectorStoreService vectorStoreService;
 
@@ -75,6 +84,12 @@ public class RagChatService {
 
     @Resource
     private ConversationMemoryService conversationMemoryService;
+
+    @Resource
+    private IRagAnswerCacheService ragAnswerCacheService;
+
+    @Resource
+    private IKnowledgeCacheVersionService knowledgeCacheVersionService;
 
     private static final String RAG_SYSTEM_PROMPT = """
         你是一个知识库问答助手。请严格根据以下【参考资料】来回答用户的问题。
@@ -138,6 +153,8 @@ public class RagChatService {
         } else {
             session = getOwnedSession(sessionId, userId);
         }
+        boolean answerCacheEligible = session.getMessageCount() == null
+                || session.getMessageCount() == 0;
 
         // ==================== Step 2: 保存用户消息 ====================
         AiChatMessage userMsg = new AiChatMessage()
@@ -149,37 +166,61 @@ public class RagChatService {
                 .setCreateTime(new Date());
         messageMapper.insert(userMsg);
 
-        // ==================== Step 2.5: 查询改写（多轮对话时，结合历史生成独立检索词） ====================
-        String searchQuery = rewriteQuery(session,request.getQuery());
-
         // ==================== Step 3: 向量检索（RAG 核心 + 权限过滤） ====================
         // 获取当前用户可访问的知识库ID列表
         List<String> accessibleKbIds = getAccessibleKnowledgeBaseIds(userId);
+        List<String> effectiveKbIds = resolveEffectiveKnowledgeBaseIds(request, accessibleKbIds);
+        RagAnswerCacheContext answerCacheContext = buildAnswerCacheContext(session, effectiveKbIds);
+
+        if (answerCacheEligible) {
+            FaqCacheItem cachedItem = ragAnswerCacheService.get(answerCacheContext, request.getQuery());
+            if (cachedItem != null) {
+                return buildCachedRagResponse(session, userMsg, userId, cachedItem);
+            }
+        }
+
+        // 首轮独立问题无需改写；必须在答案缓存未命中后才执行，避免缓存命中仍调用大模型。
+        String searchQuery = answerCacheEligible
+                ? request.getQuery()
+                : rewriteQuery(session, request.getQuery(), userMsg.getId());
+
         List<VectorSearchResultVO> searchResults;
         if (request.getKnowledgeBaseId() != null && !request.getKnowledgeBaseId().isBlank()) {
-            // 用户指定了知识库 → 校验权限后使用单知识库搜索
-            if (!accessibleKbIds.contains(request.getKnowledgeBaseId())) {
-                throw new RuntimeException("无权访问该知识库: " + request.getKnowledgeBaseId());
-            }
-            searchResults = vectorStoreService.search(searchQuery, topK, request.getKnowledgeBaseId());
+            searchResults = vectorStoreService.search(
+                    searchQuery,
+                    topK,
+                    request.getKnowledgeBaseId(),
+                    answerCacheContext.tenantId()
+            );
         } else {
             // 未指定知识库 → 在所有可访问的知识库中检索
-            searchResults = vectorStoreService.searchByKnowledgeBaseIds(searchQuery, topK, accessibleKbIds);
+            searchResults = vectorStoreService.searchByKnowledgeBaseIds(
+                    searchQuery,
+                    topK,
+                    effectiveKbIds,
+                    answerCacheContext.tenantId()
+            );
         }
         // 过滤低相关度结果（Rerank 分数通常 0~1，阈值设 0.2~0.3 比较合理）
         double minScore = 0.2;
         List<VectorSearchResultVO> filteredResults = searchResults.stream()
                 .filter(r -> r.getScore() >= minScore)
                 .collect(Collectors.toList());
-        log.info("RAG 向量检索完成: query='{}', 可访问KB数={}, 命中 {} 个 chunk, 过滤后 {} 个",
-                request.getQuery(), accessibleKbIds.size(), searchResults.size(), filteredResults.size());
+        // 日志不记录原始问题，避免用户敏感信息进入日志系统。
+        log.info("RAG 向量检索完成: queryLength={}, 可访问KB数={}, 命中 {} 个 chunk, 过滤后 {} 个",
+                request.getQuery().length(), accessibleKbIds.size(), searchResults.size(), filteredResults.size());
 
         if (ObjectUtils.isEmpty(filteredResults)) {
             return buildNoReferenceResponse(session, userMsg, userId);
         }
 
         // ==================== Step 4: 构建 LangChain4j 消息列表 ====================
-        List<ChatMessage> messages = buildRagMessages(filteredResults, sessionId, request.getQuery());
+        List<ChatMessage> messages = buildRagMessages(
+                filteredResults,
+                sessionId,
+                request.getQuery(),
+                userMsg.getId()
+        );
 
         // ==================== Step 5: 调用大模型 ====================
         long startTime = System.currentTimeMillis();
@@ -218,6 +259,20 @@ public class RagChatService {
                     .setCreateBy(userId)
                     .setCreateTime(new Date());
             messageMapper.insert(assistantMsg);
+
+            if (answerCacheEligible) {
+                FaqCacheItem cacheItem = FaqCacheItem.builder()
+                        .answer(answer)
+                        .references(RagChatResponse.fromSearchResults(filteredResults))
+                        .ragContextJson(ragContextJson)
+                        .modelName(modelName)
+                        .build();
+                runAfterCommit(() -> ragAnswerCacheService.put(
+                        answerCacheContext,
+                        request.getQuery(),
+                        cacheItem
+                ));
+            }
 
             // 异步检查是否需要生成/更新摘要（消息数超阈值时在后台线程池触发，不阻塞当前请求）
             conversationMemoryService.maybeGenerateSummaryAsync(session.getId());
@@ -267,8 +322,12 @@ public class RagChatService {
      * @Date: 2026/7/2 11:21
      * @DESC: 多轮对话时，结合历史生成独立检索词
      */
-    private String rewriteQuery(AiChatSession session, String query) {
-        List<AiChatMessage> aiChatMessages = messageMapper.loadRecentMessages(session.getId(), 6);
+    private String rewriteQuery(AiChatSession session, String query, String currentUserMessageId) {
+        List<AiChatMessage> aiChatMessages = messageMapper.loadRecentMessagesExcluding(
+                session.getId(),
+                currentUserMessageId,
+                6
+        );
         if (ObjectUtils.isEmpty(aiChatMessages)) {
             return query;
         }
@@ -344,6 +403,8 @@ public class RagChatService {
             }
         }
         sessionId = session.getId();
+        boolean answerCacheEligible = session.getMessageCount() == null
+                || session.getMessageCount() == 0;
 
         // Step 2: 保存用户消息
         AiChatMessage userMsg = new AiChatMessage()
@@ -355,23 +416,63 @@ public class RagChatService {
                 .setCreateTime(new Date());
         messageMapper.insert(userMsg);
 
-        // ==================== Step 2.5: 查询改写（多轮对话时，结合历史生成独立检索词） ====================
-        String searchQuery = rewriteQuery(session,request.getQuery());
-
         // Step 3: 向量检索（权限过滤）
         List<String> accessibleKbIds = getAccessibleKnowledgeBaseIds(userId);
-        List<VectorSearchResultVO> searchResults;
-        if (request.getKnowledgeBaseId() != null && !request.getKnowledgeBaseId().isBlank()) {
-            if (!accessibleKbIds.contains(request.getKnowledgeBaseId())) {
+        List<String> effectiveKbIds;
+        try {
+            effectiveKbIds = resolveEffectiveKnowledgeBaseIds(request, accessibleKbIds);
+        } catch (RuntimeException e) {
+            try {
+                emitter.send(SseEmitter.event().name("error").data(e.getMessage()));
+                emitter.complete();
+            } catch (IOException sendError) {
+                emitter.completeWithError(sendError);
+            }
+            return emitter;
+        }
+
+        RagAnswerCacheContext answerCacheContext = buildAnswerCacheContext(session, effectiveKbIds);
+        if (answerCacheEligible) {
+            FaqCacheItem cachedItem = ragAnswerCacheService.get(answerCacheContext, request.getQuery());
+            if (cachedItem != null) {
+                RagChatResponse cachedResponse = buildCachedRagResponse(
+                        session,
+                        userMsg,
+                        userId,
+                        cachedItem
+                );
                 try {
-                    emitter.send(SseEmitter.event().name("error").data("无权访问该知识库"));
+                    emitter.send(SseEmitter.event().name("meta").data(JSON.toJSONString(cachedResponse)));
+                    emitter.send(SseEmitter.event().name("message").data(cachedItem.getAnswer()));
+                    emitter.send(SseEmitter.event().name("done").data(""));
                     emitter.complete();
-                } catch (Exception ignored) {}
+                } catch (IOException e) {
+                    emitter.completeWithError(e);
+                }
                 return emitter;
             }
-            searchResults = vectorStoreService.search(searchQuery, topK, request.getKnowledgeBaseId());
+        }
+
+        // 首轮 FAQ 缓存未命中后再继续检索；缓存命中路径不会额外调用问题改写模型。
+        String searchQuery = answerCacheEligible
+                ? request.getQuery()
+                : rewriteQuery(session, request.getQuery(), userMsg.getId());
+
+        List<VectorSearchResultVO> searchResults;
+        if (request.getKnowledgeBaseId() != null && !request.getKnowledgeBaseId().isBlank()) {
+            searchResults = vectorStoreService.search(
+                    searchQuery,
+                    topK,
+                    request.getKnowledgeBaseId(),
+                    answerCacheContext.tenantId()
+            );
         } else {
-            searchResults = vectorStoreService.searchByKnowledgeBaseIds(searchQuery, topK, accessibleKbIds);
+            searchResults = vectorStoreService.searchByKnowledgeBaseIds(
+                    searchQuery,
+                    topK,
+                    effectiveKbIds,
+                    answerCacheContext.tenantId()
+            );
         }
         log.info("[{}] RAG 流式检索完成: 可访问KB={}, 命中chunk={}", requestId, accessibleKbIds.size(), searchResults.size());
 
@@ -396,7 +497,12 @@ public class RagChatService {
             return emitter;
         }
         // Step 4: 构建消息列表（使用过滤后的结果）
-        List<ChatMessage> messages = buildRagMessages(filteredResults, session.getId(), request.getQuery());
+        List<ChatMessage> messages = buildRagMessages(
+                filteredResults,
+                session.getId(),
+                request.getQuery(),
+                userMsg.getId()
+        );
         String ragContextJson = JSON.toJSONString(filteredResults);
 
         // 发送 meta 事件（sessionId + 参考来源），前端据此更新 UI
@@ -466,6 +572,19 @@ public class RagChatService {
                                 .setCreateBy(userId)
                                 .setCreateTime(new Date());
                         messageMapper.insert(assistantMsg);
+
+                        if (answerCacheEligible) {
+                            ragAnswerCacheService.put(
+                                    answerCacheContext,
+                                    request.getQuery(),
+                                    FaqCacheItem.builder()
+                                            .answer(fullAnswer)
+                                            .references(RagChatResponse.fromSearchResults(filteredResults))
+                                            .ragContextJson(ragContextJson)
+                                            .modelName(modelName)
+                                            .build()
+                            );
+                        }
                         // 异步检查是否需要生成/更新摘要（非关键操作，失败不影响主流程）
                         try {
                             conversationMemoryService.maybeGenerateSummaryAsync(session.getId());
@@ -578,6 +697,101 @@ public class RagChatService {
                 .build();
     }
 
+    /**
+     * 构建缓存命中响应，同时补齐聊天消息和会话计数，保证审计链路完整。
+     */
+    private RagChatResponse buildCachedRagResponse(
+            AiChatSession session,
+            AiChatMessage userMsg,
+            String userId,
+            FaqCacheItem cachedItem) {
+
+        AiChatMessage assistantMsg = new AiChatMessage()
+                .setSessionId(session.getId())
+                .setParentMessageId(userMsg.getId())
+                .setRole("assistant")
+                .setContent(cachedItem.getAnswer())
+                .setPromptTokens(0)
+                .setCompletionTokens(0)
+                .setTotalTokens(0)
+                .setRagContext(cachedItem.getRagContextJson())
+                .setRagChunkCount(cachedItem.getReferences() == null
+                        ? 0
+                        : cachedItem.getReferences().size())
+                .setModelProvider("cache")
+                .setModelName(cachedItem.getModelName())
+                .setDurationMs(0L)
+                .setStatus("success")
+                .setCreateBy(userId)
+                .setCreateTime(new Date());
+        messageMapper.insert(assistantMsg);
+        updateSessionAfterChat(session, userMsg.getId());
+
+        return RagChatResponse.builder()
+                .sessionId(session.getId())
+                .userMessageId(userMsg.getId())
+                .assistantMessageId(assistantMsg.getId())
+                .answer(cachedItem.getAnswer())
+                .references(cachedItem.getReferences())
+                .model(cachedItem.getModelName())
+                .durationMs(0L)
+                .promptTokens(0)
+                .completionTokens(0)
+                .build();
+    }
+
+    private List<String> resolveEffectiveKnowledgeBaseIds(
+            RagChatRequest request,
+            List<String> accessibleKbIds) {
+
+        if (request.getKnowledgeBaseId() != null && !request.getKnowledgeBaseId().isBlank()) {
+            if (!accessibleKbIds.contains(request.getKnowledgeBaseId())) {
+                throw new RuntimeException("无权访问该知识库: " + request.getKnowledgeBaseId());
+            }
+            return List.of(request.getKnowledgeBaseId());
+        }
+        return accessibleKbIds.stream().sorted().toList();
+    }
+
+    private RagAnswerCacheContext buildAnswerCacheContext(
+            AiChatSession session,
+            List<String> effectiveKbIds) {
+
+        String tenantId = session.getTenantId();
+        if ((tenantId == null || tenantId.isBlank()) && !effectiveKbIds.isEmpty()) {
+            AiKnowledgeBase knowledgeBase = knowledgeBaseService.getById(effectiveKbIds.get(0));
+            if (knowledgeBase != null) {
+                tenantId = knowledgeBase.getTenantId();
+            }
+        }
+        if (tenantId == null || tenantId.isBlank()) {
+            tenantId = "0";
+        }
+
+        return new RagAnswerCacheContext(
+                tenantId,
+                effectiveKbIds,
+                knowledgeCacheVersionService.buildFingerprint(effectiveKbIds),
+                modelName,
+                ragPromptVersion
+        );
+    }
+
+    private void runAfterCommit(Runnable runnable) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(
+                    new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            runnable.run();
+                        }
+                    }
+            );
+        } else {
+            runnable.run();
+        }
+    }
+
     // ==================== 会话 & 消息查询 ====================
 
     /**
@@ -618,7 +832,8 @@ public class RagChatService {
      */
     private List<ChatMessage> buildRagMessages(List<VectorSearchResultVO> searchResults,
                                                 String sessionId,
-                                                String currentQuery) {
+                                                String currentQuery,
+                                                String currentUserMessageId) {
         List<ChatMessage> messages = new ArrayList<>();
 
         // 1. System Message：RAG 指令 + 检索到的参考资料
@@ -628,7 +843,10 @@ public class RagChatService {
 
         // 2. 历史对话（滑动窗口 + 摘要压缩，由 ConversationMemoryService 统一管理）
         //    返回结构：[SystemMessage: 摘要(如果有)] + [最近N条 UserMessage/AiMessage]
-        List<ChatMessage> historyMessages = conversationMemoryService.buildHistoryMessages(sessionId);
+        List<ChatMessage> historyMessages = conversationMemoryService.buildHistoryMessages(
+                sessionId,
+                currentUserMessageId
+        );
         messages.addAll(historyMessages);
 
         // 3. 当前用户问题

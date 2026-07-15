@@ -13,6 +13,7 @@ import org.jeecg.common.system.base.controller.JeecgController;
 import org.jeecg.common.system.query.QueryGenerator;
 import org.jeecg.common.util.oConvertUtils;
 import org.jeecg.modules.airag.practice.doc.entity.AiKnowledgeBase;
+import org.jeecg.modules.airag.practice.cache.service.IKnowledgeCacheVersionService;
 import org.jeecg.modules.airag.practice.doc.service.IAiKnowledgeBaseService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -43,6 +44,9 @@ public class AiKnowledgeBaseController
 
     @Autowired
     private IAiKnowledgeBaseService knowledgeBaseService;
+
+    @Autowired
+    private IKnowledgeCacheVersionService knowledgeCacheVersionService;
 
     /**
      * 分页查询
@@ -94,6 +98,9 @@ public class AiKnowledgeBaseController
         if (kb.getChunkCount() == null) {
             kb.setChunkCount(0);
         }
+        if (kb.getCacheVersion() == null) {
+            kb.setCacheVersion(1L);
+        }
         kb.setCreateTime(new Date());
         knowledgeBaseService.save(kb);
         return Result.OK("新增成功");
@@ -110,6 +117,7 @@ public class AiKnowledgeBaseController
         }
         kb.setUpdateTime(new Date());
         knowledgeBaseService.updateById(kb);
+        knowledgeCacheVersionService.bumpVersion(kb.getId());
         return Result.OK("修改成功");
     }
 

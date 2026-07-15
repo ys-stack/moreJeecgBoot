@@ -74,10 +74,8 @@ public class RerankService {
         headers.setBearerAuth(config.getEmbed().getApiKey());
 
         String url = config.getEmbed().getBaseUrl() + "/rerank";
-        log.info("调用 Rerank API: url={}, model={}, query='{}', 文档数={}",
-                url, rerankConfig.getModelName(),
-                query.length() > 30 ? query.substring(0, 30) + "..." : query,
-                documents.size());
+        log.info("调用 Rerank API: url={}, model={}, queryLength={}, 文档数={}",
+                url, rerankConfig.getModelName(), query == null ? 0 : query.length(), documents.size());
 
         try {
             HttpEntity<String> entity = new HttpEntity<>(body.toJSONString(), headers);

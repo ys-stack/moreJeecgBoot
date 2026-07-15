@@ -50,6 +50,11 @@ public class PracticeVectorConfig {
         private int dimensions = 1024;
         /** 超时秒数 */
         private int timeoutSeconds = 30;
+        /** 模型版本，模型升级后修改该值，自动产生新缓存键 */
+        private String modelVersion = "bge-m3-v1";
+
+        /** 文本归一化算法版本 */
+        private String normalizationVersion = "nfkc-v1";
     }
 
     /**

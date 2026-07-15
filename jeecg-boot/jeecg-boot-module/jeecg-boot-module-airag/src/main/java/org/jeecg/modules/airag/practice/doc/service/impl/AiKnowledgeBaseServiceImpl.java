@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocument;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocumentChunk;
 import org.jeecg.modules.airag.practice.doc.entity.AiKnowledgeBase;
+import org.jeecg.modules.airag.practice.cache.service.IKnowledgeCacheVersionService;
 import org.jeecg.modules.airag.practice.doc.mapper.AiDocumentChunkMapper;
 import org.jeecg.modules.airag.practice.doc.mapper.AiDocumentMapper;
 import org.jeecg.modules.airag.practice.doc.mapper.AiKnowledgeBaseMapper;
@@ -37,6 +38,9 @@ public class AiKnowledgeBaseServiceImpl
     @Resource
     private AiDocumentChunkMapper aiDocumentChunkMapper;
 
+    @Resource
+    private IKnowledgeCacheVersionService knowledgeCacheVersionService;
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public int deleteWithDocuments(String kbId) {
@@ -67,6 +71,7 @@ public class AiKnowledgeBaseServiceImpl
 
         // 4. 删除知识库本身
         this.removeById(kbId);
+        knowledgeCacheVersionService.publishDeleted(kbId);
         log.info("删除知识库: kbId={}, 文档数={}", kbId, docs.size());
 
         return docs.size();

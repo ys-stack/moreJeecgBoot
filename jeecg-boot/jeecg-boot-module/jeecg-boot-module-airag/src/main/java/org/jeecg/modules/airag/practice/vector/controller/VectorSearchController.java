@@ -7,8 +7,11 @@ import jakarta.annotation.Resource;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocument;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocumentChunk;
+import org.jeecg.modules.airag.practice.doc.entity.AiKnowledgeBase;
+import org.jeecg.modules.airag.practice.cache.service.IKnowledgeCacheVersionService;
 import org.jeecg.modules.airag.practice.doc.mapper.AiDocumentMapper;
 import org.jeecg.modules.airag.practice.doc.service.IAiDocumentChunkService;
+import org.jeecg.modules.airag.practice.doc.service.IAiKnowledgeBaseService;
 import org.jeecg.modules.airag.practice.vector.service.VectorStoreService;
 import org.jeecg.modules.airag.practice.vector.vo.VectorSearchRequestVO;
 import org.jeecg.modules.airag.practice.vector.vo.VectorSearchResultVO;
@@ -45,6 +48,12 @@ public class VectorSearchController {
     @Resource
     private AiDocumentMapper aiDocumentMapper;
 
+    @Resource
+    private IAiKnowledgeBaseService knowledgeBaseService;
+
+    @Resource
+    private IKnowledgeCacheVersionService knowledgeCacheVersionService;
+
     /**
      * 对指定文档的分片做向量化并写入 ES
      *
@@ -67,7 +76,12 @@ public class VectorSearchController {
             }
 
             // 3. 向量化 + 写入 ES
-            int count = vectorStoreService.vectorizeAndStore(documentId, doc.getKnowledgeBaseId(), chunks);
+            int count = vectorStoreService.vectorizeAndStore(
+                    documentId,
+                    doc.getKnowledgeBaseId(),
+                    chunks,
+                    doc.getTenantId()
+            );
             if (count != chunks.size()) {
                 return Result.error("向量化写入数量不一致，期望 " + chunks.size() + " 条，实际 " + count + " 条");
             }
@@ -78,6 +92,7 @@ public class VectorSearchController {
             // 4. 更新文档状态（标记已向量化）
             doc.setStatus("vectorized");
             aiDocumentMapper.updateById(doc);
+            knowledgeCacheVersionService.bumpVersion(doc.getKnowledgeBaseId());
 
             return Result.OK("向量化完成，写入 " + count + " 条向量", count);
         } catch (Exception e) {
@@ -97,9 +112,19 @@ public class VectorSearchController {
         if (request.getQuery() == null || request.getQuery().isBlank()) {
             return Result.error("查询文本不能为空");
         }
+        if (request.getKnowledgeBaseId() == null || request.getKnowledgeBaseId().isBlank()) {
+            return Result.error("直接向量检索必须指定 knowledgeBaseId");
+        }
         try {
+            AiKnowledgeBase knowledgeBase = knowledgeBaseService.getById(request.getKnowledgeBaseId());
+            if (knowledgeBase == null) {
+                return Result.error("知识库不存在");
+            }
             List<VectorSearchResultVO> results = vectorStoreService.search(
-                    request.getQuery(), request.getTopK(), request.getKnowledgeBaseId());
+                    request.getQuery(),
+                    request.getTopK(),
+                    request.getKnowledgeBaseId(),
+                    knowledgeBase.getTenantId());
             return Result.OK(results);
         } catch (Exception e) {
             log.error("向量检索失败: query={}", request.getQuery(), e);
@@ -114,7 +139,12 @@ public class VectorSearchController {
     @Operation(summary = "删除文档向量数据")
     public Result<Long> deleteVectors(@PathVariable String documentId) {
         try {
+            AiDocument doc = aiDocumentMapper.selectById(documentId);
             long deleted = vectorStoreService.deleteByDocumentId(documentId);
+            // 直接删除 ES 向量同样会改变知识库内容，必须让旧答案缓存立即失效。
+            if (doc != null) {
+                knowledgeCacheVersionService.bumpVersion(doc.getKnowledgeBaseId());
+            }
             return Result.OK("已删除 " + deleted + " 条向量", deleted);
         } catch (Exception e) {
             log.error("向量删除失败: documentId={}", documentId, e);

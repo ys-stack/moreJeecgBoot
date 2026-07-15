@@ -43,10 +43,8 @@ public class PracticeChatServiceImpl implements IPracticeChatService {
 
     @Value("${practice.ai.model-name:deepseek-chat}")
     private String modelName;
-
     @Resource
     private IAiPromptTemplateService iAiPromptTemplateService;
-
     @Resource
     private IAiModelCallLogService aiModelCallLogService;
 

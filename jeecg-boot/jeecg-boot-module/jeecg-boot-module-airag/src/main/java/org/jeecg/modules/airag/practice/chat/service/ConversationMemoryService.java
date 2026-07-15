@@ -159,6 +159,15 @@ public class ConversationMemoryService {
      * @return 历史消息列表（按时间正序）
      */
     public List<ChatMessage> buildHistoryMessages(String sessionId) {
+        return buildHistoryMessages(sessionId, null);
+    }
+
+    /**
+     * 构建历史消息，并排除当前刚写入数据库的用户消息。
+     * RAG 主流程会在调用模型前保存用户消息用于审计，如果不排除，当前问题会同时出现在
+     * 历史消息和最终 UserMessage 中，造成重复输入并浪费 token。
+     */
+    public List<ChatMessage> buildHistoryMessages(String sessionId, String excludedMessageId) {
         List<ChatMessage> result = new ArrayList<>();
 
         // ① 加载会话摘要（长期记忆）
@@ -172,7 +181,13 @@ public class ConversationMemoryService {
         }
 
         // ② 加载最近 N 条原始消息（短期记忆）
-        List<AiChatMessage> recentMessages = messageMapper.loadRecentMessages(sessionId, SHORT_TERM_COUNT);
+        List<AiChatMessage> recentMessages = excludedMessageId == null || excludedMessageId.isBlank()
+                ? messageMapper.loadRecentMessages(sessionId, SHORT_TERM_COUNT)
+                : messageMapper.loadRecentMessagesExcluding(
+                        sessionId,
+                        excludedMessageId,
+                        SHORT_TERM_COUNT
+                );
         for (AiChatMessage msg : recentMessages) {
             switch (msg.getRole()) {
                 case "user" -> result.add(new UserMessage(msg.getContent()));

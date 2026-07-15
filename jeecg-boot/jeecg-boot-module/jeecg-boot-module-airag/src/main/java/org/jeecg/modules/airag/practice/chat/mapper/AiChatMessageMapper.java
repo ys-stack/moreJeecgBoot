@@ -30,4 +30,22 @@ public interface AiChatMessageMapper extends BaseMapper<AiChatMessage> {
             + " LIMIT #{count}"
             + ") t ORDER BY create_time ASC")
     List<AiChatMessage> loadRecentMessages(@Param("sessionId") String sessionId, @Param("count") int count);
+
+    @Select("SELECT * FROM ("
+            + " SELECT id, session_id, parent_message_id, role, content, "
+            + "   prompt_tokens, completion_tokens, total_tokens, "
+            + "   rag_context, rag_chunk_count, model_provider, model_name, "
+            + "   duration_ms, status, error_msg, tool_calls, create_by, create_time "
+            + " FROM ai_chat_message "
+            + " WHERE session_id = #{sessionId} "
+            + "   AND id <> #{excludedMessageId} "
+            + "   AND role IN ('user', 'assistant') "
+            + "   AND status = 'success' "
+            + " ORDER BY create_time DESC "
+            + " LIMIT #{count}"
+            + ") t ORDER BY create_time ASC")
+    List<AiChatMessage> loadRecentMessagesExcluding(
+            @Param("sessionId") String sessionId,
+            @Param("excludedMessageId") String excludedMessageId,
+            @Param("count") int count);
 }

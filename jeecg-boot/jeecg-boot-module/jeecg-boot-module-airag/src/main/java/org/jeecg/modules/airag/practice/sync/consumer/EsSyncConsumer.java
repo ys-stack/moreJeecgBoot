@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSON;
 import lombok.extern.slf4j.Slf4j;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocument;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocumentChunk;
+import org.jeecg.modules.airag.practice.cache.service.IKnowledgeCacheVersionService;
 import org.jeecg.modules.airag.practice.doc.mapper.AiDocumentMapper;
 import org.jeecg.modules.airag.practice.doc.service.IAiDocumentChunkService;
 import org.jeecg.modules.airag.practice.sync.dto.EsSyncMessage;
@@ -43,6 +44,9 @@ public class EsSyncConsumer {
     @Autowired
     private IEsSyncTaskService esSyncTaskService;
 
+    @Autowired
+    private IKnowledgeCacheVersionService knowledgeCacheVersionService;
+
     /**
      * 消费同步消息并写入 ES。
      * 当同步操作由于 ES 故障或网络问题抛出异常时，触发 @Retryable 机制：
@@ -71,7 +75,7 @@ public class EsSyncConsumer {
         if (EsSyncMessage.ACTION_INDEX.equalsIgnoreCase(action)) {
             handleIndexAction(documentId, message.getKnowledgeBaseId());
         } else if (EsSyncMessage.ACTION_DELETE.equalsIgnoreCase(action)) {
-            handleDeleteAction(documentId);
+            handleDeleteAction(documentId, message.getKnowledgeBaseId());
         } else {
             log.warn("[MQ同步] 未知操作类型: {}", action);
             return;
@@ -105,7 +109,12 @@ public class EsSyncConsumer {
         }
 
         // 3. 调用向量服务写入 ES
-        int count = vectorStoreService.vectorizeAndStore(documentId, knowledgeBaseId, chunks);
+        int count = vectorStoreService.vectorizeAndStore(
+                documentId,
+                knowledgeBaseId,
+                chunks,
+                doc.getTenantId()
+        );
         log.info("[MQ同步] 成功同步 {} 条向量到 ES: docId={}", count, documentId);
 
         // 防止 DELETE 已先执行、旧 INDEX 后写入造成数据复活。
@@ -119,14 +128,17 @@ public class EsSyncConsumer {
         doc.setStatus("vectorized");
         doc.setUpdateTime(new Date());
         aiDocumentMapper.updateById(doc);
+        knowledgeCacheVersionService.bumpVersion(knowledgeBaseId);
     }
 
     /**
      * 处理删除同步逻辑 (同步清理 ES 中的数据)
      */
-    private void handleDeleteAction(String documentId) {
-        log.info("[MQ同步] 开始清理 ES 中的文档数据: docId={}", documentId);
+    private void handleDeleteAction(String documentId, String knowledgeBaseId) {
+        log.info("[MQ同步] 开始清理 ES 中的文档数据: docId={}, kbId={}",
+                documentId, knowledgeBaseId);
         long count = vectorStoreService.deleteByDocumentId(documentId);
+        knowledgeCacheVersionService.bumpVersion(knowledgeBaseId);
         log.info("[MQ同步] 成功清理 ES 向量数={}条: docId={}", count, documentId);
     }
 

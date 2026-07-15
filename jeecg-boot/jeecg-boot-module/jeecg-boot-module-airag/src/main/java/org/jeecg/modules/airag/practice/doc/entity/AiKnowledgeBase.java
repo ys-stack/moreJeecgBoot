@@ -1,6 +1,8 @@
 package org.jeecg.modules.airag.practice.doc.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.annotation.JsonFormat;
@@ -60,6 +62,14 @@ public class AiKnowledgeBase implements Serializable {
     @Excel(name = "分片总数", width = 10)
     @Schema(description = "分片总数")
     private Integer chunkCount;
+
+    /**
+     * 知识库缓存版本。文档、分片、可见权限或模型配置变化后递增。
+     * 答案缓存键包含该版本，因此旧答案不会被新请求命中。
+    */
+    @Schema(description = "知识库缓存版本")
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private Long cacheVersion;
 
     @Schema(description = "扩展元数据JSON")
     private String metadata;
