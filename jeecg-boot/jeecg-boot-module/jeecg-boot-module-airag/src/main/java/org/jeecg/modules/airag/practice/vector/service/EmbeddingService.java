@@ -9,6 +9,7 @@ import org.jeecg.modules.airag.practice.vector.cache.EmbeddingCacheContext;
 import org.jeecg.modules.airag.practice.vector.cache.service.IEmbeddingVectorCacheService;
 import org.jeecg.modules.airag.practice.vector.config.PracticeVectorConfig;
 import org.springframework.stereotype.Service;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -65,8 +66,7 @@ public class EmbeddingService {
 
         String modelName = config.getEmbed().getModelName();
         String modelVersion = config.getEmbed().getModelVersion();
-        String normalizationVersion =
-                config.getEmbed().getNormalizationVersion();
+        String normalizationVersion = config.getEmbed().getNormalizationVersion();
         int dimensions = config.getEmbed().getDimensions();
 
         List<String> canonicalTexts = new ArrayList<>(texts.size());
@@ -74,19 +74,15 @@ public class EmbeddingService {
         List<float[]> results = new ArrayList<>(texts.size());
 
         for (String text : texts) {
-            String canonicalText =
-                    cacheKeyHasher.normalizeEmbeddingText(text);
+            String canonicalText = cacheKeyHasher.normalizeEmbeddingText(text);
 
             if (canonicalText.isBlank()) {
-                throw new IllegalArgumentException(
-                        "Embedding 输入文本不能为空"
-                );
+                throw new IllegalArgumentException("Embedding 输入文本不能为空");
             }
 
             canonicalTexts.add(canonicalText);
 
-            cacheKeys.add(
-                    embeddingCacheService.buildCacheKey(
+            cacheKeys.add(embeddingCacheService.buildCacheKey(
                             context,
                             canonicalText,
                             modelName,
@@ -95,7 +91,6 @@ public class EmbeddingService {
                             dimensions
                     )
             );
-
             results.add(null);
         }
 
@@ -135,21 +130,13 @@ public class EmbeddingService {
 
         try {
             if (!ownedLocks.isEmpty()) {
-                List<Integer> ownerIndexes =
-                        new ArrayList<>(ownedLocks.keySet());
-
-                List<String> apiTexts = ownerIndexes.stream()
-                        .map(canonicalTexts::get)
-                        .toList();
-
-                List<float[]> apiVectors =
-                        embeddingApiClient.embedBatch(apiTexts);
+                List<Integer> ownerIndexes = new ArrayList<>(ownedLocks.keySet());
+                List<String> apiTexts = ownerIndexes.stream().map(canonicalTexts::get).toList();
+                List<float[]> apiVectors = embeddingApiClient.embedBatch(apiTexts);
                 cacheMetrics.recordEmbeddingApiRequest(apiTexts.size());
 
                 if (apiVectors.size() != ownerIndexes.size()) {
-                    throw new IllegalStateException(
-                            "Embedding API 返回数量与请求数量不一致"
-                    );
+                    throw new IllegalStateException("Embedding API 返回数量与请求数量不一致");
                 }
 
                 for (int i = 0; i < ownerIndexes.size(); i++) {
@@ -172,12 +159,7 @@ public class EmbeddingService {
                 }
             }
         } finally {
-            ownedLocks.forEach((index, token) ->
-                    embeddingCacheService.unlock(
-                            cacheKeys.get(index),
-                            token
-                    )
-            );
+            ownedLocks.forEach((index, token) -> embeddingCacheService.unlock(cacheKeys.get(index), token));
         }
 
         List<Integer> unresolvedIndexes = new ArrayList<>();
@@ -205,14 +187,11 @@ public class EmbeddingService {
                     .map(canonicalTexts::get)
                     .toList();
 
-            List<float[]> fallbackVectors =
-                    embeddingApiClient.embedBatch(fallbackTexts);
+            List<float[]> fallbackVectors = embeddingApiClient.embedBatch(fallbackTexts);
             cacheMetrics.recordEmbeddingApiRequest(fallbackTexts.size());
 
             if (fallbackVectors.size() != unresolvedIndexes.size()) {
-                throw new IllegalStateException(
-                        "Embedding API 降级返回数量与请求数量不一致"
-                );
+                throw new IllegalStateException("Embedding API 降级返回数量与请求数量不一致");
             }
 
             for (int i = 0; i < unresolvedIndexes.size(); i++) {
@@ -239,16 +218,12 @@ public class EmbeddingService {
             float[] vector = results.get(i);
 
             if (vector == null) {
-                throw new IllegalStateException(
-                        "Embedding 结果为空: index=" + i
-                );
+                throw new IllegalStateException("Embedding 结果为空: index=" + i);
             }
-
             FloatVectorCodec.validate(vector, dimensions);
         }
 
-        log.info(
-                "Embedding 完成: total={}, hit={}, api={}",
+        log.info("Embedding 完成: total={}, hit={}, api={}",
                 texts.size(),
                 texts.size() - missIndexes.size(),
                 ownedLocks.size() + unresolvedIndexes.size()

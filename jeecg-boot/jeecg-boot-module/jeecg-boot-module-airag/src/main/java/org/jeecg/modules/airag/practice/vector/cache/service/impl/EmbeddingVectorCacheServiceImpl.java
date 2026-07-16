@@ -36,12 +36,10 @@ public class EmbeddingVectorCacheServiceImpl implements IEmbeddingVectorCacheSer
     private static final long REDIS_BASE_TTL_SECONDS = 7L * 24 * 3600;
     private static final long LOCK_TTL_SECONDS = 30L;
 
-    private static final DefaultRedisScript<Long> UNLOCK_SCRIPT =
-            new DefaultRedisScript<>(
+    private static final DefaultRedisScript<Long> UNLOCK_SCRIPT = new DefaultRedisScript<>(
                     "if redis.call('get', KEYS[1]) == ARGV[1] "
                             + "then return redis.call('del', KEYS[1]) "
-                            + "else return 0 end",
-                    Long.class
+                            + "else return 0 end", Long.class
             );
 
     @Resource
@@ -135,8 +133,7 @@ public class EmbeddingVectorCacheServiceImpl implements IEmbeddingVectorCacheSer
             FloatVectorCodec.validate(vector, dimensions);
         } catch (Exception e) {
             // 损坏记录必须清理，否则唯一键会阻止后续正确向量持久化。
-            log.error("Embedding MySQL 缓存数据损坏: key={}, error={}",
-                    shortKey(cacheKey), e.getMessage());
+            log.error("Embedding MySQL 缓存数据损坏: key={}, error={}", shortKey(cacheKey), e.getMessage());
             deleteCorruptRecord(dbCache);
             return null;
         }
@@ -147,12 +144,9 @@ public class EmbeddingVectorCacheServiceImpl implements IEmbeddingVectorCacheSer
         try {
             embeddingCacheMapper.touchLastHitTime(cacheKey);
         } catch (Exception e) {
-            log.debug("更新 Embedding 最近命中时间失败: key={}, error={}",
-                    shortKey(cacheKey), e.getMessage());
+            log.debug("更新 Embedding 最近命中时间失败: key={}, error={}", shortKey(cacheKey), e.getMessage());
         }
-
         log.debug("Embedding L2 MySQL 命中: key={}", shortKey(cacheKey));
-
         return FloatVectorCodec.copy(vector);
     }
 
