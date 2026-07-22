@@ -16,8 +16,7 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 public class EmbeddingCacheRedisConfig {
 
     @Bean("embeddingVectorRedisTemplate")
-    public RedisTemplate<String, byte[]> embeddingVectorRedisTemplate(
-            RedisConnectionFactory connectionFactory) {
+    public RedisTemplate<String, byte[]> embeddingVectorRedisTemplate(RedisConnectionFactory connectionFactory) {
 
         RedisTemplate<String, byte[]> template = new RedisTemplate<>();
         template.setConnectionFactory(connectionFactory);
