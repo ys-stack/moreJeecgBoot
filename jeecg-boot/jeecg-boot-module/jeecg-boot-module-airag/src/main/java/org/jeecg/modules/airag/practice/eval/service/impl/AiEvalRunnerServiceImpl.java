@@ -8,6 +8,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.jeecg.modules.airag.practice.chat.service.RagChatService;
 import org.jeecg.modules.airag.practice.chat.vo.RagChatRequest;
 import org.jeecg.modules.airag.practice.chat.vo.RagChatResponse;
+import org.jeecg.modules.airag.practice.doc.service.impl.BatchParseServiceImpl;
 import org.jeecg.modules.airag.practice.eval.entity.AiEvalDataset;
 import org.jeecg.modules.airag.practice.eval.entity.AiEvalResult;
 import org.jeecg.modules.airag.practice.eval.service.IAiEvalDatasetService;
@@ -15,20 +16,16 @@ import org.jeecg.modules.airag.practice.eval.service.IAiEvalResultService;
 import org.jeecg.modules.airag.practice.eval.service.IAiEvalRunnerService;
 import org.jeecg.modules.airag.practice.eval.vo.AiEvalReportVO;
 import org.jeecg.modules.airag.practice.eval.vo.AiEvalRunRequest;
+import org.jeecg.modules.airag.practice.threadpool.PracticeThreadPool;
 import org.jeecg.modules.airag.practice.tool.controller.ToolChatController;
 import org.jeecg.modules.airag.practice.tool.service.ToolChatService;
 import org.jeecg.modules.airag.practice.tool.vo.ToolChatResponse;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.UUID;
+import java.util.*;
+import java.util.concurrent.Future;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -43,6 +40,9 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
     private RagChatService ragChatService;
     @Resource
     private ToolChatService toolChatService;
+    @Resource
+    @Qualifier("practiceAsyncPool")
+    private PracticeThreadPool asyncPool;
 
     /*
      * @Author: ys
@@ -57,17 +57,18 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
         String runId = UUID.randomUUID().toString().replace("-", "");
         //按评测类型和用例编码筛选本次要跑的用例
         List<AiEvalDataset> cases = loadCases(request);
-        for (AiEvalDataset item : cases) {
-            AiEvalResult result;
-            try {
-                result = "agent".equals(item.getEvalType())
-                        ? runAgentCase(runId, request, item, userId)
-                        : runRagCase(runId, request, item, userId);
-            } catch (Exception e) {
-                log.error("评测用例执行失败: {}", item.getCaseCode(), e);
-                result = buildErrorResult(runId, request, item, userId, e);
-            }
-            resultService.save(result);
+        if (ObjectUtils.isEmpty(cases)) {
+            throw new RuntimeException("测试用例不能为空!");
+        }
+        for (int i = 0; i < cases.size(); i++) {
+            AiEvalDataset evalDataset = cases.get(i);
+            AiEvalRunRequest finalRequest = request;
+            asyncPool.submit(() -> {
+                AiEvalResult result = "agent".equals(evalDataset.getEvalType())
+                        ? runAgentCase(runId, finalRequest, evalDataset, userId)
+                        : runRagCase(runId, finalRequest, evalDataset, userId);
+                resultService.save(result);
+            });
         }
         return report(runId);
     }
