@@ -394,6 +394,11 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
                 .build();
     }
 
+    @Override
+    public Map<String, Object> compare(String baseRunId, String targetRunId) {
+        return Map.of();
+    }
+
     /**
      * 通用加权平均分计算函数
      */
@@ -511,6 +516,19 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
     @Override
     public AiEvalRunTask getTaskStatus(String runId) {
         return (AiEvalRunTask) redisTemplate.opsForValue().get(CACHE_EVAL_RUNNER_PREFIX+runId);
+    }
+
+    @Override
+    public Map<String, Object> compare(String baseRunId, String targetRunId) {
+        AiEvalReportVO base = report(baseRunId);
+        AiEvalReportVO target = report(targetRunId);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("baseRunId", baseRunId);
+        result.put("targetRunId", targetRunId);
+        result.put("baseReport", base);
+        result.put("targetReport", target);
+        result.put("deltas", buildDeltas(base, target));
+        return result;
     }
 
     /**
