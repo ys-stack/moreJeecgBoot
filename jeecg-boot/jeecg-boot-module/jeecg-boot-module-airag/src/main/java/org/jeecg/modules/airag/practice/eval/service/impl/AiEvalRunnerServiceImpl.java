@@ -1,6 +1,7 @@
 package org.jeecg.modules.airag.practice.eval.service.impl;
 
 import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.TypeReference;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
@@ -16,16 +17,20 @@ import org.jeecg.modules.airag.practice.eval.service.IAiEvalResultService;
 import org.jeecg.modules.airag.practice.eval.service.IAiEvalRunnerService;
 import org.jeecg.modules.airag.practice.eval.vo.AiEvalReportVO;
 import org.jeecg.modules.airag.practice.eval.vo.AiEvalRunRequest;
+import org.jeecg.modules.airag.practice.eval.vo.AiEvalRunTask;
 import org.jeecg.modules.airag.practice.threadpool.PracticeThreadPool;
 import org.jeecg.modules.airag.practice.tool.controller.ToolChatController;
 import org.jeecg.modules.airag.practice.tool.service.ToolChatService;
 import org.jeecg.modules.airag.practice.tool.vo.ToolChatResponse;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.*;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -43,6 +48,10 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
     @Resource
     @Qualifier("practiceAsyncPool")
     private PracticeThreadPool asyncPool;
+    @Resource
+    private RedisTemplate redisTemplate;
+
+    private static final String CACHE_EVAL_RUNNER_PREFIX = "eval:runner:";
 
     /*
      * @Author: ys
@@ -259,10 +268,31 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
     /*
      * @Author: ys
      * @Date: 2026/7/5 星期日 22:31
-     * @Desc: 根据关键词命中比例计算回答相关性
+     * @Desc: 根据关键词命中比例（支持同义词组二维数组）计算回答相关性
      */
     private BigDecimal scoreKeywords(String answer, String expectedKeywordsJson) {
-        if (StringUtils.isBlank(expectedKeywordsJson)) return new BigDecimal("100");
+        if (StringUtils.isBlank(expectedKeywordsJson) || StringUtils.isBlank(answer)) {
+            return new BigDecimal("100");
+        }
+
+        try {
+            // 优先尝试解析为二维同义词组数组：[["RDB", "快照"], ["AOF", "日志"]]
+            List<List<String>> synonymGroups = JSON.parseObject(expectedKeywordsJson, new TypeReference<List<List<String>>>() {});
+            if (synonymGroups != null && !synonymGroups.isEmpty()) {
+                long hitGroupCount = 0;
+                for (List<String> group : synonymGroups) {
+                    boolean groupHit = group.stream()
+                            .anyMatch(kw -> StringUtils.isNotBlank(kw) && StringUtils.containsIgnoreCase(answer, kw));
+                    if (groupHit) {
+                        hitGroupCount++;
+                    }
+                }
+                return BigDecimal.valueOf(hitGroupCount * 100.0 / synonymGroups.size()).setScale(2, RoundingMode.HALF_UP);
+            }
+        } catch (Exception e) {
+            // 降级为一维简单关键词列表
+        }
+
         List<String> keywords = parseStringArray(expectedKeywordsJson);
         if (keywords == null || keywords.isEmpty()) return new BigDecimal("100");
 
@@ -330,44 +360,157 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
     /*
      * @Author: ys
      * @Date: 2026/7/5 星期日 22:20
-     * @Desc: 根据 runId 汇总评测报告
+     * @Desc: 根据 runId 汇总评测报告（结合用例权重加权计算平均分）
      */
     @Override
     public AiEvalReportVO report(String runId) {
         List<AiEvalResult> results = resultService.listByRunId(runId);
         int totalCases = results == null ? 0 : results.size();
-        int passedCases = results == null ? 0 : (int) results.stream()
+        if (totalCases == 0) {
+            return AiEvalReportVO.builder().runId(runId).totalCases(0).passRate(BigDecimal.ZERO).build();
+        }
+
+        int passedCases = (int) results.stream()
                 .filter(item -> item.getPassed() != null && item.getPassed() == 1)
                 .count();
 
+        Map<String, BigDecimal> caseWeightMap = datasetService.list().stream()
+                .collect(Collectors.toMap(AiEvalDataset::getId, item -> item.getWeight() != null ? item.getWeight() : BigDecimal.ONE, (k1, k2) -> k1));
+
         return AiEvalReportVO.builder()
                 .runId(runId)
-                .runName(totalCases > 0 ? results.get(0).getRunName() : null)
+                .runName(results.get(0).getRunName())
                 .totalCases(totalCases)
                 .passedCases(passedCases)
-                .passRate(totalCases == 0 ? BigDecimal.ZERO : BigDecimal.valueOf(passedCases * 100.0 / totalCases).setScale(2, RoundingMode.HALF_UP))
-                .avgScore(avg(results, AiEvalResult::getTotalScore))
-                .ragAnswerRelevance(avg(results, AiEvalResult::getAnswerRelevanceScore))
-                .ragReferenceHit(avg(results, AiEvalResult::getReferenceHitScore))
-                .ragReject(avg(results, AiEvalResult::getRejectScore))
-                .agentToolSelection(avg(results, AiEvalResult::getToolSelectionScore))
-                .agentParamAccuracy(avg(results, AiEvalResult::getParamAccuracyScore))
-                .agentTaskCompletion(avg(results, AiEvalResult::getTaskCompletionScore))
+                .passRate(BigDecimal.valueOf(passedCases * 100.0 / totalCases).setScale(2, RoundingMode.HALF_UP))
+                .avgScore(calculateWeightedAvg(results, AiEvalResult::getTotalScore, caseWeightMap))
+                .ragAnswerRelevance(calculateWeightedAvg(results, AiEvalResult::getAnswerRelevanceScore, caseWeightMap))
+                .ragReferenceHit(calculateWeightedAvg(results, AiEvalResult::getReferenceHitScore, caseWeightMap))
+                .ragReject(calculateWeightedAvg(results, AiEvalResult::getRejectScore, caseWeightMap))
+                .agentToolSelection(calculateWeightedAvg(results, AiEvalResult::getToolSelectionScore, caseWeightMap))
+                .agentParamAccuracy(calculateWeightedAvg(results, AiEvalResult::getParamAccuracyScore, caseWeightMap))
+                .agentTaskCompletion(calculateWeightedAvg(results, AiEvalResult::getTaskCompletionScore, caseWeightMap))
                 .results(results)
                 .build();
     }
 
+    /**
+     * 通用加权平均分计算函数
+     */
+    private BigDecimal calculateWeightedAvg(List<AiEvalResult> results,
+                                           Function<AiEvalResult, BigDecimal> scoreGetter,
+                                           Map<String, BigDecimal> caseWeightMap) {
+        if (ObjectUtils.isEmpty(results)) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal totalWeightedScore = BigDecimal.ZERO;
+        BigDecimal totalWeight = BigDecimal.ZERO;
+
+        for (AiEvalResult result : results) {
+            BigDecimal score = scoreGetter.apply(result);
+            if (score == null) continue;
+
+            BigDecimal weight = caseWeightMap.getOrDefault(result.getDatasetId(), BigDecimal.ONE);
+            totalWeightedScore = totalWeightedScore.add(score.multiply(weight));
+            totalWeight = totalWeight.add(weight);
+        }
+
+        if (totalWeight.compareTo(BigDecimal.ZERO) == 0) {
+            return BigDecimal.ZERO;
+        }
+
+        return totalWeightedScore.divide(totalWeight, 2, RoundingMode.HALF_UP);
+    }
+
+    /*
+     * @Author: ys
+     * @Date: 2026/7/23 星期四 22:10
+     * @Desc: 提交异步任务
+     */
     @Override
-    public Map<String, Object> compare(String baseRunId, String targetRunId) {
-        AiEvalReportVO base = report(baseRunId);
-        AiEvalReportVO target = report(targetRunId);
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("baseRunId", baseRunId);
-        result.put("targetRunId", targetRunId);
-        result.put("baseReport", base);
-        result.put("targetReport", target);
-        result.put("deltas", buildDeltas(base, target));
-        return result;
+    public AiEvalRunTask submitRunAsync(AiEvalRunRequest request, String userId) {
+        if (request == null) request = new AiEvalRunRequest();
+        String runId = UUID.randomUUID().toString().replace("-", "");
+        String runName = StringUtils.defaultIfBlank(request.getRunName(), "AI评测-" + runId.substring(0, 8));
+
+        List<AiEvalDataset> cases = loadCases(request);
+        AiEvalRunTask task = new AiEvalRunTask()
+                .setRunId(runId)
+                .setRunName(runName)
+                .setStatus("RUNNING")
+                .setTotalCases(cases.size())
+                .setProcessedCases(0)
+                .setPassedCases(0)
+                .setStartTime(new Date());
+
+        redisTemplate.opsForValue().set(CACHE_EVAL_RUNNER_PREFIX + runId, task, 24, TimeUnit.HOURS);
+        // 异步提交到线程池中运行，避免 HTTP 主线程阻塞超时
+        final AiEvalRunRequest reqCopy = request;
+        asyncPool.submit(() -> executeTaskAsync(runId, reqCopy, cases, userId));
+        return task;
+    }
+
+    /*
+     * @Author: ys
+     * @Date: 2026/7/23 星期四 22:42
+     * @Desc: 异步执行任务逻辑
+     */
+    private void executeTaskAsync(String runId, AiEvalRunRequest request, List<AiEvalDataset> cases, String userId) {
+        AiEvalRunTask task = (AiEvalRunTask) redisTemplate.opsForValue().get(CACHE_EVAL_RUNNER_PREFIX + runId);
+        if (task == null) {
+            task = new AiEvalRunTask()
+                    .setRunId(runId)
+                    .setStatus("RUNNING")
+                    .setTotalCases(cases.size())
+                    .setProcessedCases(0)
+                    .setPassedCases(0)
+                    .setStartTime(new Date());
+        }
+        int passedCount = 0;
+
+        try {
+            for (AiEvalDataset item : cases) {
+                // 更新当前正在处理的用例编码，方便前端展示“正在评测 RAG_005...”
+                task.setCurrentCaseCode(item.getCaseCode());
+                AiEvalResult result;
+                try {
+                    result = "agent".equals(item.getEvalType())
+                            ? runAgentCase(runId, request, item, userId)
+                            : runRagCase(runId, request, item, userId);
+                } catch (Exception e) {
+                    log.error("评测用例异步执行失败: {}", item.getCaseCode(), e);
+                    result = buildErrorResult(runId, request, item, userId, e);
+                }
+                resultService.save(result);
+                if (result.getPassed() != null && result.getPassed() == 1) {
+                    passedCount++;
+                }
+                // 递增已处理计数并同步写回 Redis
+                task.setProcessedCases(task.getProcessedCases() + 1);
+                task.setPassedCases(passedCount);
+                redisTemplate.opsForValue().set(CACHE_EVAL_RUNNER_PREFIX + runId, task, 24, TimeUnit.HOURS);
+            }
+            task.setStatus("COMPLETED")
+                    .setCurrentCaseCode("DONE")
+                    .setEndTime(new Date());
+            redisTemplate.opsForValue().set(CACHE_EVAL_RUNNER_PREFIX + runId, task, 24, TimeUnit.HOURS);
+        } catch (Exception e) {
+            log.error("评测任务运行致命异常, runId={}", runId, e);
+            task.setStatus("FAILED")
+                    .setErrorMsg(e.getMessage())
+                    .setEndTime(new Date());
+            redisTemplate.opsForValue().set(CACHE_EVAL_RUNNER_PREFIX + runId, task, 24, TimeUnit.HOURS);
+        }
+    }
+
+    /*
+     * @Author: ys
+     * @Date: 2026/7/23 星期四 22:11
+     * @Desc: 查看任务进度
+     */
+    @Override
+    public AiEvalRunTask getTaskStatus(String runId) {
+        return (AiEvalRunTask) redisTemplate.opsForValue().get(CACHE_EVAL_RUNNER_PREFIX+runId);
     }
 
     /**

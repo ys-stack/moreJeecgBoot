@@ -20,6 +20,7 @@ import org.jeecg.modules.airag.practice.eval.service.IAiEvalResultService;
 import org.jeecg.modules.airag.practice.eval.service.IAiEvalRunnerService;
 import org.jeecg.modules.airag.practice.eval.vo.AiEvalReportVO;
 import org.jeecg.modules.airag.practice.eval.vo.AiEvalRunRequest;
+import org.jeecg.modules.airag.practice.eval.vo.AiEvalRunTask;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -292,5 +293,17 @@ public class AiEvalController {
         if (result.getCreateTime() == null) {
             result.setCreateTime(new Date());
         }
+    }
+
+    /** 提交异步一键评测任务 */
+    @PostMapping("/run/async")
+    public Result<AiEvalRunTask> runAsync(@RequestBody AiEvalRunRequest request) {
+        LoginUser user = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+        return Result.ok(evalRunnerService.submitRunAsync(request, user.getId()));
+    }
+    /** 轮询查询评测任务实时进度 */
+    @GetMapping("/task/status/{runId}")
+    public Result<AiEvalRunTask> getTaskStatus(@PathVariable String runId) {
+        return Result.ok(evalRunnerService.getTaskStatus(runId));
     }
 }
