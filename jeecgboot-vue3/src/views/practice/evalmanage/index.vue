@@ -5,7 +5,7 @@
         <ExperimentOutlined />
         AI评测管理
       </h1>
-      <p>维护 RAG / Agent 评测集，查看每次评测运行结果，为 Prompt 优化提供可对比数据</p>
+      <p>维护 RAG / Agent 评测集，一键发起批量自动化评测，查看评测报告与指标对比</p>
     </div>
 
     <a-tabs v-model:activeKey="activeTab">
@@ -53,6 +53,12 @@
             <a-button type="primary" @click="handleAddDataset">
               <PlusOutlined />
               新增用例
+            </a-button>
+
+            <!-- 核心功能：一键发起评测按钮 -->
+            <a-button type="primary" style="background-color: #52c41a; border-color: #52c41a" @click="handleOpenRunModal">
+              <PlayCircleOutlined />
+              一键发起评测
             </a-button>
           </a-space>
         </div>
@@ -145,6 +151,10 @@
               <ReloadOutlined />
               刷新
             </a-button>
+            <a-button type="primary" ghost @click="handleOpenCompareModal">
+              <SwapOutlined />
+              运行对比 (Compare)
+            </a-button>
             <a-popconfirm
               v-if="resultQuery.runId"
               title="确定删除当前runId下的所有评测结果？"
@@ -191,6 +201,7 @@
             <template v-else-if="column.key === 'action'">
               <a-space>
                 <a-button type="link" size="small" @click="handleViewResult(record)">详情</a-button>
+                <a-button type="link" size="small" @click="handleViewReport(record.runId)">报告</a-button>
                 <a-popconfirm title="确定删除这条评测结果？" ok-text="删除" cancel-text="取消" @confirm="handleDeleteResult(record.id)">
                   <a-button type="link" size="small" danger>删除</a-button>
                 </a-popconfirm>
@@ -201,6 +212,172 @@
       </a-tab-pane>
     </a-tabs>
 
+    <!-- Modal 1: 一键发起评测配置弹窗 -->
+    <a-modal
+      v-model:open="runModalOpen"
+      title="一键发起AI自动化评测"
+      width="580px"
+      ok-text="开始执行评测"
+      cancel-text="取消"
+      :confirm-loading="runStarting"
+      @ok="submitRun"
+    >
+      <a-form :model="runForm" layout="vertical">
+        <a-form-item label="评测运行名称">
+          <a-input v-model:value="runForm.runName" placeholder="如：Prompt-V2效果测试 / 模型基线对比" />
+        </a-form-item>
+        <a-form-item label="评测用例类型">
+          <a-select v-model:value="runForm.evalType" placeholder="请选择评测范围">
+            <a-select-option value="">全部用例 (RAG + Agent)</a-select-option>
+            <a-select-option value="rag">仅 RAG 知识库用例</a-select-option>
+            <a-select-option value="agent">仅 Agent 工具调用用例</a-select-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item label="指定模型名称 (可选)">
+          <a-input v-model:value="runForm.modelName" placeholder="如：mimo-v2.5-pro / qwen2.5-72b，留空使用默认模型" />
+        </a-form-item>
+        <a-form-item label="执行方式">
+          <a-radio-group v-model:value="runForm.asyncMode">
+            <a-radio :value="true">异步后台执行（推荐，实时进度条轮询）</a-radio>
+            <a-radio :value="false">同步阻塞等待（适合小规模少量用例）</a-radio>
+          </a-radio-group>
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
+    <!-- Modal 2: 评测实时进度与报告大盘弹窗 -->
+    <a-modal
+      v-model:open="reportModalOpen"
+      :title="taskRunning ? 'AI评测任务执行中...' : 'AI评测报告大盘 (' + (reportData?.runId || '') + ')'"
+      width="820px"
+      :footer="null"
+    >
+      <!-- 运行进度展示 -->
+      <div v-if="taskRunning" style="padding: 20px 10px; text-align: center">
+        <a-progress type="circle" :percent="currentTask?.progressPercentage || 0" :status="taskStatusType" />
+        <div style="margin-top: 16px; font-size: 16px; font-weight: 600">
+          状态: {{ taskStatusText }} ({{ currentTask?.processedCases || 0 }} / {{ currentTask?.totalCases || 0 }})
+        </div>
+        <div style="margin-top: 8px; color: #8c8c8c" v-if="currentTask?.currentCaseCode">
+          <SyncOutlined spin /> 正在评测用例: {{ currentTask.currentCaseCode }}
+        </div>
+      </div>
+
+      <!-- 评测报告数据大盘 -->
+      <div v-else-if="reportData" style="padding: 10px">
+        <a-row :gutter="16" style="margin-bottom: 20px">
+          <a-col :span="6">
+            <a-card size="small" style="background: #f6ffed; border-color: #b7eb8f">
+              <a-statistic title="总体通过率" :value="reportData.passRate || 0" suffix="%" :precision="2" :value-style="{ color: '#52c41a' }" />
+            </a-card>
+          </a-col>
+          <a-col :span="6">
+            <a-card size="small" style="background: #e6f7ff; border-color: #91caff">
+              <a-statistic title="加权平均分" :value="reportData.avgScore || 0" suffix="分" :precision="2" :value-style="{ color: '#1677ff' }" />
+            </a-card>
+          </a-col>
+          <a-col :span="6">
+            <a-card size="small">
+              <a-statistic title="总用例数" :value="reportData.totalCases || 0" />
+            </a-card>
+          </a-col>
+          <a-col :span="6">
+            <a-card size="small">
+              <a-statistic title="通过用例数" :value="reportData.passedCases || 0" :value-style="{ color: '#389e0d' }" />
+            </a-card>
+          </a-col>
+        </a-row>
+
+        <a-card title="RAG 知识库评测维度" size="small" style="margin-bottom: 16px">
+          <a-row :gutter="16">
+            <a-col :span="8">
+              <a-statistic title="回答相关性 (Relevance)" :value="reportData.ragAnswerRelevance || 0" suffix="分" />
+            </a-col>
+            <a-col :span="8">
+              <a-statistic title="引用命中率 (Ref Hit)" :value="reportData.ragReferenceHit || 0" suffix="分" />
+            </a-col>
+            <a-col :span="8">
+              <a-statistic title="防幻觉拒答得分 (Reject)" :value="reportData.ragReject || 0" suffix="分" />
+            </a-col>
+          </a-row>
+        </a-card>
+
+        <a-card title="Agent 工具调用评测维度" size="small" style="margin-bottom: 16px">
+          <a-row :gutter="16">
+            <a-col :span="8">
+              <a-statistic title="工具选择正确率" :value="reportData.agentToolSelection || 0" suffix="分" />
+            </a-col>
+            <a-col :span="8">
+              <a-statistic title="参数提取准确率" :value="reportData.agentParamAccuracy || 0" suffix="分" />
+            </a-col>
+            <a-col :span="8">
+              <a-statistic title="任务最终完成度" :value="reportData.agentTaskCompletion || 0" suffix="分" />
+            </a-col>
+          </a-row>
+        </a-card>
+
+        <div style="text-align: right">
+          <a-button type="primary" @click="switchToResultTab(reportData.runId)">查看用例结果列表</a-button>
+        </div>
+      </div>
+    </a-modal>
+
+    <!-- Modal 3: 两次 Run 对比 (Compare) 弹窗 -->
+    <a-modal
+      v-model:open="compareModalOpen"
+      title="评测结果 Diff 对比 (Compare)"
+      width="780px"
+      :footer="null"
+    >
+      <a-form layout="inline" style="margin-bottom: 20px">
+        <a-form-item label="基线 RunId (Base)">
+          <a-input v-model:value="compareForm.baseRunId" placeholder="请输入基线 runId" style="width: 220px" />
+        </a-form-item>
+        <a-form-item label="目标 RunId (Target)">
+          <a-input v-model:value="compareForm.targetRunId" placeholder="请输入对比 runId" style="width: 220px" />
+        </a-form-item>
+        <a-form-item>
+          <a-button type="primary" @click="submitCompare" :loading="compareLoading">对比</a-button>
+        </a-form-item>
+      </a-form>
+
+      <div v-if="compareResult" style="padding: 10px">
+        <a-descriptions title="核心指标 Deltas 变动" bordered size="small" :column="2">
+          <a-descriptions-item label="通过率变动 (PassRate Delta)">
+            <span :style="{ color: deltaColor(compareResult.deltas?.passRateDelta) }">
+              {{ compareResult.deltas?.passRateDelta > 0 ? '+' : '' }}{{ compareResult.deltas?.passRateDelta }}%
+            </span>
+          </a-descriptions-item>
+          <a-descriptions-item label="平均分变动 (AvgScore Delta)">
+            <span :style="{ color: deltaColor(compareResult.deltas?.avgScoreDelta) }">
+              {{ compareResult.deltas?.avgScoreDelta > 0 ? '+' : '' }}{{ compareResult.deltas?.avgScoreDelta }}分
+            </span>
+          </a-descriptions-item>
+          <a-descriptions-item label="RAG 相关性变动">
+            <span :style="{ color: deltaColor(compareResult.deltas?.ragAnswerRelevanceDelta) }">
+              {{ compareResult.deltas?.ragAnswerRelevanceDelta > 0 ? '+' : '' }}{{ compareResult.deltas?.ragAnswerRelevanceDelta }}分
+            </span>
+          </a-descriptions-item>
+          <a-descriptions-item label="RAG 引用命中变动">
+            <span :style="{ color: deltaColor(compareResult.deltas?.ragReferenceHitDelta) }">
+              {{ compareResult.deltas?.ragReferenceHitDelta > 0 ? '+' : '' }}{{ compareResult.deltas?.ragReferenceHitDelta }}分
+            </span>
+          </a-descriptions-item>
+          <a-descriptions-item label="Agent 工具选择变动">
+            <span :style="{ color: deltaColor(compareResult.deltas?.agentToolSelectionDelta) }">
+              {{ compareResult.deltas?.agentToolSelectionDelta > 0 ? '+' : '' }}{{ compareResult.deltas?.agentToolSelectionDelta }}分
+            </span>
+          </a-descriptions-item>
+          <a-descriptions-item label="Agent 参数准确变动">
+            <span :style="{ color: deltaColor(compareResult.deltas?.agentParamAccuracyDelta) }">
+              {{ compareResult.deltas?.agentParamAccuracyDelta > 0 ? '+' : '' }}{{ compareResult.deltas?.agentParamAccuracyDelta }}分
+            </span>
+          </a-descriptions-item>
+        </a-descriptions>
+      </div>
+    </a-modal>
+
+    <!-- 用例新增/编辑 Modal -->
     <a-modal
       v-model:open="datasetModalOpen"
       :title="datasetEditing ? '编辑评测用例' : '新增评测用例'"
@@ -321,6 +498,7 @@
       </a-form>
     </a-modal>
 
+    <!-- 用例结果详情 Drawer -->
     <a-drawer v-model:open="resultDrawerOpen" title="评测结果详情" width="720px">
       <template v-if="currentResult">
         <a-descriptions bordered size="small" :column="2">
@@ -369,9 +547,12 @@ import { message as antMessage } from 'ant-design-vue';
 import {
   DeleteOutlined,
   ExperimentOutlined,
+  PlayCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
   SearchOutlined,
+  SwapOutlined,
+  SyncOutlined,
 } from '@ant-design/icons-vue';
 import { defHttp } from '/@/utils/http/axios';
 
@@ -427,6 +608,33 @@ interface EvalResult {
   createTime?: string;
 }
 
+interface EvalReport {
+  runId: string;
+  runName?: string;
+  totalCases: number;
+  passedCases: number;
+  passRate: number;
+  avgScore: number;
+  ragAnswerRelevance: number;
+  ragReferenceHit: number;
+  ragReject: number;
+  agentToolSelection: number;
+  agentParamAccuracy: number;
+  agentTaskCompletion: number;
+}
+
+interface EvalRunTask {
+  runId: string;
+  runName?: string;
+  status: string;
+  totalCases: number;
+  processedCases: number;
+  passedCases: number;
+  currentCaseCode?: string;
+  errorMsg?: string;
+  progressPercentage: number;
+}
+
 const API_BASE = '/practice/eval';
 const activeTab = ref('dataset');
 
@@ -469,11 +677,52 @@ const datasetForm = reactive<EvalDataset>(defaultDatasetForm());
 const resultDrawerOpen = ref(false);
 const currentResult = ref<EvalResult | null>(null);
 
+// 一键评测相关
+const runModalOpen = ref(false);
+const runStarting = ref(false);
+const runForm = reactive({
+  runName: '',
+  evalType: '',
+  modelName: '',
+  asyncMode: true,
+});
+
+// 报告/任务进度相关
+const reportModalOpen = ref(false);
+const taskRunning = ref(false);
+const currentTask = ref<EvalRunTask | null>(null);
+const reportData = ref<EvalReport | null>(null);
+let pollTimer: any = null;
+
+// 对比 (Compare) 相关
+const compareModalOpen = ref(false);
+const compareLoading = ref(false);
+const compareForm = reactive({
+  baseRunId: '',
+  targetRunId: '',
+});
+const compareResult = ref<any>(null);
+
 const expectedRejectChecked = computed({
   get: () => datasetForm.expectedReject === 1,
   set: (value: boolean) => {
     datasetForm.expectedReject = value ? 1 : 0;
   },
+});
+
+const taskStatusType = computed(() => {
+  if (!currentTask.value) return 'active';
+  if (currentTask.value.status === 'COMPLETED') return 'success';
+  if (currentTask.value.status === 'FAILED') return 'exception';
+  return 'active';
+});
+
+const taskStatusText = computed(() => {
+  if (!currentTask.value) return '准备中';
+  if (currentTask.value.status === 'RUNNING') return '运行中';
+  if (currentTask.value.status === 'COMPLETED') return '已完成';
+  if (currentTask.value.status === 'FAILED') return '失败: ' + (currentTask.value.errorMsg || '');
+  return currentTask.value.status;
 });
 
 const datasetRules = {
@@ -505,7 +754,7 @@ const resultColumns = [
   { title: '状态', dataIndex: 'status', key: 'status', width: 90 },
   { title: '耗时', dataIndex: 'durationMs', key: 'durationMs', width: 100 },
   { title: '创建时间', dataIndex: 'createTime', key: 'createTime', width: 170 },
-  { title: '操作', key: 'action', width: 130, fixed: 'right' as const },
+  { title: '操作', key: 'action', width: 160, fixed: 'right' as const },
 ];
 
 onMounted(() => {
@@ -654,6 +903,146 @@ async function submitDataset() {
   }
 }
 
+// 一键评测打开 Modal
+function handleOpenRunModal() {
+  runForm.runName = 'AI评测-' + new Date().toISOString().slice(0, 10);
+  runForm.evalType = '';
+  runForm.modelName = '';
+  runForm.asyncMode = true;
+  runModalOpen.value = true;
+}
+
+// 提交发起评测
+async function submitRun() {
+  runStarting.value = true;
+  try {
+    if (runForm.asyncMode) {
+      // 异步触发
+      const task = await defHttp.post({
+        url: `${API_BASE}/run/async`,
+        params: {
+          runName: runForm.runName,
+          evalType: runForm.evalType || undefined,
+          modelName: runForm.modelName || undefined,
+        },
+      });
+      runModalOpen.value = false;
+      antMessage.success('评测任务已启动，正在后台进行评测...');
+      startPollTask(task.runId);
+    } else {
+      // 同步触发
+      runModalOpen.value = false;
+      reportModalOpen.value = true;
+      taskRunning.value = true;
+      const report = await defHttp.post({
+        url: `${API_BASE}/run`,
+        params: {
+          runName: runForm.runName,
+          evalType: runForm.evalType || undefined,
+          modelName: runForm.modelName || undefined,
+        },
+      });
+      reportData.value = report;
+      taskRunning.value = false;
+      antMessage.success('评测完成！');
+      loadResults();
+    }
+  } catch (e: any) {
+    antMessage.error(e.message || '发起评测失败');
+    taskRunning.value = false;
+  } finally {
+    runStarting.value = false;
+  }
+}
+
+// 轮询异步任务进度
+function startPollTask(runId: String) {
+  reportModalOpen.value = true;
+  taskRunning.value = true;
+  reportData.value = null;
+
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const task = await defHttp.get({ url: `${API_BASE}/task/status/${runId}` });
+      currentTask.value = task;
+      if (task.status === 'COMPLETED') {
+        clearInterval(pollTimer);
+        taskRunning.value = false;
+        antMessage.success('后台评测任务已完成！');
+        loadReport(runId);
+        loadResults();
+      } else if (task.status === 'FAILED') {
+        clearInterval(pollTimer);
+        taskRunning.value = false;
+        antMessage.error('评测失败: ' + (task.errorMsg || ''));
+      }
+    } catch (e) {
+      logError(e);
+    }
+  }, 2000);
+}
+
+function logError(e: any) {
+  console.warn('轮询评测进度异常', e);
+}
+
+async function loadReport(runId: string) {
+  try {
+    const report = await defHttp.get({ url: `${API_BASE}/report/${runId}` });
+    reportData.value = report;
+  } catch (e: any) {
+    antMessage.error('加载报告失败: ' + e.message);
+  }
+}
+
+function handleViewReport(runId: string) {
+  taskRunning.value = false;
+  reportModalOpen.value = true;
+  loadReport(runId);
+}
+
+function switchToResultTab(runId: string) {
+  reportModalOpen.value = false;
+  activeTab.value = 'result';
+  resultQuery.runId = runId;
+  loadResults();
+}
+
+function handleOpenCompareModal() {
+  compareForm.baseRunId = '';
+  compareForm.targetRunId = '';
+  compareResult.value = null;
+  compareModalOpen.value = true;
+}
+
+async function submitCompare() {
+  if (!compareForm.baseRunId || !compareForm.targetRunId) {
+    antMessage.warning('请填写两个 RunId 进行对比');
+    return;
+  }
+  compareLoading.value = true;
+  try {
+    const res = await defHttp.get({
+      url: `${API_BASE}/compare`,
+      params: { baseRunId: compareForm.baseRunId, targetRunId: compareForm.targetRunId },
+    });
+    compareResult.value = res;
+    antMessage.success('对比完成！');
+  } catch (e: any) {
+    antMessage.error(e.message || '对比失败');
+  } finally {
+    compareLoading.value = false;
+  }
+}
+
+function deltaColor(delta?: number) {
+  const val = Number(delta || 0);
+  if (val > 0) return '#52c41a';
+  if (val < 0) return '#f5222d';
+  return '#8c8c8c';
+}
+
 async function handleDeleteDataset(id?: string) {
   if (!id) return;
   await defHttp.delete({ url: `${API_BASE}/dataset/delete`, params: { id } });
@@ -790,3 +1179,4 @@ function formatJson(text?: string) {
   }
 }
 </style>
+

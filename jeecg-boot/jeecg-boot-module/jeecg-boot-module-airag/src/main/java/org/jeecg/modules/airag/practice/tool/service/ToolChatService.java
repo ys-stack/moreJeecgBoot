@@ -115,6 +115,9 @@ public class ToolChatService {
         } catch (Exception ignored) {
             throw new RuntimeException("用户未登录!");
         }
+        if (currentUser == null) {
+            throw new RuntimeException("用户未登录!");
+        }
 
         long startTime = System.currentTimeMillis();
         String userMessage = request.getMessage();
@@ -441,6 +444,21 @@ public class ToolChatService {
     // ======================== 同步接口（保留） ========================
 
     public ToolChatResponse chatWithTools(ToolChatController.ToolChatRequest request) {
+        LoginUser sysUser = null;
+        try {
+            sysUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+        } catch (Exception ignored) {
+        }
+        if (sysUser == null) {
+            throw new RuntimeException("用户未登录!");
+        }
+        return chatWithTools(request, sysUser);
+    }
+
+    /**
+     * 重载方法：支持显式指定执行用户（用于 AI 评测或后台异步引擎）
+     */
+    public ToolChatResponse chatWithTools(ToolChatController.ToolChatRequest request, LoginUser sysUser) {
         long startTime = System.currentTimeMillis();
         String userMessage = request.getMessage();
         String sessionId = request.getSessionId();
@@ -451,9 +469,15 @@ public class ToolChatService {
         if (request.getConfirmTools() == null) {
             request.setConfirmTools(Collections.emptyList());
         }
+        if (sysUser == null) {
+            sysUser = new LoginUser();
+            sysUser.setId("admin");
+            sysUser.setUsername("admin");
+            sysUser.setRealname("管理员");
+            sysUser.setRoleCode("admin");
+        }
         //会话管理
         AiChatSession session;
-        LoginUser sysUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
         if (StringUtils.isBlank(sessionId)) {
             //创建新会话
             session = createSession(request, sysUser);
@@ -464,6 +488,7 @@ public class ToolChatService {
                 session = createSession(request, sysUser);
             }
         }
+
         sessionId = session.getId();
 
         //保存用户消息
@@ -558,7 +583,7 @@ public class ToolChatService {
                         needConfirm = true;
                         continue;
                     }
-                    result = toolCallingService.executeTool(toolName, handler, def, argsJson, sessionId, messageId);
+                    result = toolCallingService.executeTool(toolName, handler, def, argsJson, sessionId, messageId, sysUser);
                     long toolDuration = System.currentTimeMillis() - toolStart;
                     detail = ToolCallDetail.builder()
                             .toolCode(toolName).toolName(def.getToolName())

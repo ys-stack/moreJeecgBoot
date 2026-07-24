@@ -144,15 +144,26 @@ public class ToolCallingService {
      */
     public String executeTool(String toolCode, ToolHandler handler, AiToolDefinition def,
                               String argsJson, String sessionId, String messageId) {
-        LoginUser currentUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+        LoginUser currentUser = null;
+        try {
+            currentUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+        } catch (Exception ignored) {}
         return executeTool(toolCode, handler, def, argsJson, sessionId, messageId, currentUser);
     }
 
     /**
-     * 执行工具（支持外部传入用户，用于 SSE 线程池等无法通过 SecurityUtils 获取用户的场景）
+     * 执行工具（支持外部显式传入用户，如评测引擎传入专有 admin 账号；无显式用户且未登录时抛未登录异常）
      */
     public String executeTool(String toolCode, ToolHandler handler, AiToolDefinition def,
                               String argsJson, String sessionId, String messageId, LoginUser currentUser) {
+        if (currentUser == null) {
+            try {
+                currentUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+            } catch (Exception ignored) {}
+        }
+        if (currentUser == null) {
+            throw new RuntimeException("用户未登录，无法执行工具!");
+        }
         ToolContext ctx = new ToolContext(currentUser, sessionId, messageId);
         AbstractToolHandler.setContext(ctx);
 

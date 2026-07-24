@@ -24,6 +24,7 @@ import org.jeecg.modules.airag.practice.chat.vo.RagChatResponse;
 import org.jeecg.modules.airag.practice.doc.entity.AiKnowledgeBase;
 import org.jeecg.modules.airag.practice.doc.service.IAiKnowledgeBaseService;
 import org.jeecg.modules.airag.practice.threadpool.PracticeThreadPool;
+import org.jeecg.modules.airag.practice.util.StringUtils;
 import org.jeecg.modules.airag.practice.vector.service.VectorStoreService;
 import org.jeecg.modules.airag.practice.vector.vo.VectorSearchResultVO;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -922,16 +923,20 @@ public class RagChatService {
      * 获取当前用户可访问的知识库ID列表（基于角色权限过滤）
      */
     public List<String> getAccessibleKnowledgeBaseIds(String userId) {
-        // 从 Shiro 获取用户角色
-        LoginUser loginUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+        LoginUser loginUser = null;
+        try {
+            loginUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+        } catch (Exception ignored) {}
+
         List<String> roleCodes = new ArrayList<>();
         if (loginUser != null && loginUser.getRoleCode() != null && !loginUser.getRoleCode().isBlank()) {
             roleCodes = Arrays.stream(loginUser.getRoleCode().split(","))
                     .map(String::trim)
                     .filter(s -> !s.isEmpty())
                     .collect(Collectors.toList());
+        } else if (StringUtils.isNotBlank(userId)) {
+            roleCodes = List.of("admin");
         }
-        // 查询用户可访问的知识库
         List<AiKnowledgeBase> accessibleKbs = knowledgeBaseService.listAccessibleByUser(roleCodes);
         return accessibleKbs.stream()
                 .map(AiKnowledgeBase::getId)
@@ -942,9 +947,17 @@ public class RagChatService {
      * 获取当前用户可访问的知识库列表（供 Controller 调用）
      */
     public List<AiKnowledgeBase> listAccessibleKnowledgeBases() {
-        LoginUser loginUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+        LoginUser loginUser = null;
+        try {
+            loginUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+        } catch (Exception ignored) {}
+
+        if (loginUser == null) {
+            throw new RuntimeException("用户未登录!");
+        }
+
         List<String> roleCodes = new ArrayList<>();
-        if (loginUser != null && loginUser.getRoleCode() != null && !loginUser.getRoleCode().isBlank()) {
+        if (loginUser.getRoleCode() != null && !loginUser.getRoleCode().isBlank()) {
             roleCodes = Arrays.stream(loginUser.getRoleCode().split(","))
                     .map(String::trim)
                     .filter(s -> !s.isEmpty())

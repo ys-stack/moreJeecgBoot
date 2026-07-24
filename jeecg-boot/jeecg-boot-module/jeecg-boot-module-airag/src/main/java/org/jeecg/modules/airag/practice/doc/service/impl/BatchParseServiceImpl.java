@@ -126,7 +126,6 @@ public class BatchParseServiceImpl implements BatchParseService {
             });
             futures.add(future);
         }
-
         log.info("已提交 {} 个任务到线程池, queueSize={}", futures.size(), asyncPool.getQueue().size());
 
         // ========== 3. 逐个收集结果（带超时） ==========
@@ -209,8 +208,7 @@ public class BatchParseServiceImpl implements BatchParseService {
             PythonParseResult parseResult = docParserClient.parseFile(file);
 
             // ---------- 转换分片 ----------
-            List<AiDocumentChunk> chunkEntities = convertToEntities(
-                    parseResult.getChunks(), documentId, fileName, filePath);
+            List<AiDocumentChunk> chunkEntities = convertToEntities(parseResult.getChunks(), documentId, fileName, filePath);
 
             int totalChars = parseResult.getTotalChars() != null ? parseResult.getTotalChars() : 0;
             int chunkCount = parseResult.getChunkCount() != null ? parseResult.getChunkCount() : chunkEntities.size();
@@ -236,8 +234,7 @@ public class BatchParseServiceImpl implements BatchParseService {
                 aiDocumentMapper.updateById(completedDoc);
                 updateKnowledgeBaseCounts(kbId);
 
-                return chunkEntities.isEmpty() ? null
-                        : esSyncTaskService.saveTask(EsSyncMessage.ACTION_INDEX, completedDocumentId, kbId);
+                return chunkEntities.isEmpty() ? null : esSyncTaskService.saveTask(EsSyncMessage.ACTION_INDEX, completedDocumentId, kbId);
             });
 
             if (task != null) {
@@ -295,8 +292,7 @@ public class BatchParseServiceImpl implements BatchParseService {
         try {
             esSyncProducer.sendSyncMessage(task.getId(), task.getAction(), task.getDocumentId(), task.getKnowledgeBaseId());
         } catch (Exception e) {
-            log.error("批量上传 ES 同步消息首次投递失败，任务保持待补偿状态: taskId={}, docId={}",
-                    task.getId(), task.getDocumentId(), e);
+            log.error("批量上传 ES 同步消息首次投递失败，任务保持待补偿状态: taskId={}, docId={}",task.getId(), task.getDocumentId(), e);
             return;
         }
 
@@ -304,8 +300,7 @@ public class BatchParseServiceImpl implements BatchParseService {
             esSyncTaskService.markDispatched(task.getId());
             log.info("批量上传 ES 同步消息已投递: taskId={}, docId={}", task.getId(), task.getDocumentId());
         } catch (Exception e) {
-            log.error("批量上传 ES 同步消息已发送，但任务状态更新失败，等待 Outbox 幂等补偿: taskId={}, docId={}",
-                    task.getId(), task.getDocumentId(), e);
+            log.error("批量上传 ES 同步消息已发送，但任务状态更新失败，等待 Outbox 幂等补偿: taskId={}, docId={}",task.getId(), task.getDocumentId(), e);
         }
     }
 

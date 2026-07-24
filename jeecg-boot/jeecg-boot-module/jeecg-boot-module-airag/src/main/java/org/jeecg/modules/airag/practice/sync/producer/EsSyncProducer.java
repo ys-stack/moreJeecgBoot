@@ -39,8 +39,7 @@ public class EsSyncProducer {
 
         EsSyncMessage message = new EsSyncMessage(taskId, action, documentId, knowledgeBaseId);
         String jsonStr = JSON.toJSONString(message);
-        log.info("[MQ同步] 发送同步消息: queue={}, taskId={}, action={}, docId={}",
-                QUEUE_NAME, taskId, action, documentId);
+        log.info("[MQ同步] 发送同步消息: queue={}, taskId={}, action={}, docId={}",QUEUE_NAME, taskId, action, documentId);
         // 发送失败必须向上抛出，让 Outbox 保持可重试状态。
         jmsTemplate.convertAndSend(QUEUE_NAME, jsonStr);
     }

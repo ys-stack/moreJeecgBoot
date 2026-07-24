@@ -433,21 +433,22 @@ practice:
   ai:
     base-url: ${PRACTICE_AI_BASE_URL:}
     api-key: ${PRACTICE_AI_API_KEY:}
-    model-name: ${PRACTICE_AI_MODEL_NAME:}
-    temperature: ${PRACTICE_AI_TEMPERATURE:}
-    max-tokens: ${PRACTICE_AI_MAX_TOKENS:}
-    timeout-seconds: ${PRACTICE_AI_TIMEOUT_SECONDS:}
+    model-name: ${PRACTICE_AI_MODEL_NAME:mimo-v2.5-pro}
+    temperature: ${PRACTICE_AI_TEMPERATURE:0.7}
+    max-tokens: ${PRACTICE_AI_MAX_TOKENS:2000}
+    timeout-seconds: ${PRACTICE_AI_TIMEOUT_SECONDS:60}
   embed:
     api-key: ${PRACTICE_EMBED_API_KEY:}
-    base-url: ${PRACTICE_EMBED_BASE_URL:}
-    model-name: ${PRACTICE_EMBED_MODEL_NAME:}
-    dimensions: ${PRACTICE_EMBED_DIMENSIONS:}
-    timeout-seconds: ${PRACTICE_EMBED_TIMEOUT_SECONDS:}
+    base-url: ${PRACTICE_EMBED_BASE_URL:https://api.siliconflow.cn/v1}
+    model-name: ${PRACTICE_EMBED_MODEL_NAME:BAAI/bge-m3}
+    dimensions: ${PRACTICE_EMBED_DIMENSIONS:1024}
+    timeout-seconds: ${PRACTICE_EMBED_TIMEOUT_SECONDS:30}
   es:
-    cluster-nodes: ${PRACTICE_ES_CLUSTER_NODES:}
-    username: ${PRACTICE_ES_USERNAME:}
+    cluster-nodes: ${PRACTICE_ES_CLUSTER_NODES:127.0.0.1:9200}
+    username: ${PRACTICE_ES_USERNAME:elastic}
     password: ${PRACTICE_ES_PASSWORD:}
-    index-name: ${PRACTICE_ES_INDEX_NAME:}
+    index-name: ${PRACTICE_ES_INDEX_NAME:practice_knowledge_chunks}
   parser:
-    url: ${PRACTICE_PARSER_URL:}
-    timeout-seconds: ${PRACTICE_PARSER_TIMEOUT_SECONDS:}
+    url: ${PRACTICE_PARSER_URL:http://localhost:8000}
+    timeout-seconds: ${PRACTICE_PARSER_TIMEOUT_SECONDS:120}
+

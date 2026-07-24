@@ -18,8 +18,7 @@ import java.util.UUID;
 @Component
 public class CacheInvalidationProducer {
 
-    public static final String VIRTUAL_TOPIC_NAME =
-            "VirtualTopic.airag.practice.cache.invalidate";
+    public static final String VIRTUAL_TOPIC_NAME = "VirtualTopic.airag.practice.cache.invalidate";
     private static final String ACTIVEMQ_SCHEDULED_DELAY = "AMQ_SCHEDULED_DELAY";
 
     @Resource
@@ -48,8 +47,7 @@ public class CacheInvalidationProducer {
             log.info("发送缓存失效事件: kbId={}, delayMs={}", knowledgeBaseId, delayMillis);
         } catch (Exception e) {
             // 缓存失效失败不能回滚知识库主业务；本地版本缓存短 TTL 会提供最终一致性兜底。
-            log.error("发送缓存失效事件失败: kbId={}, delayMs={}",
-                    knowledgeBaseId, delayMillis, e);
+            log.error("发送缓存失效事件失败: kbId={}, delayMs={}",knowledgeBaseId, delayMillis, e);
         }
     }
 }

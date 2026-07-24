@@ -6,6 +6,7 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.modules.airag.practice.chat.service.RagChatService;
 import org.jeecg.modules.airag.practice.chat.vo.RagChatRequest;
 import org.jeecg.modules.airag.practice.chat.vo.RagChatResponse;
@@ -51,6 +52,7 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
     @Resource
     private RedisTemplate redisTemplate;
 
+    //评测前缀
     private static final String CACHE_EVAL_RUNNER_PREFIX = "eval:runner:";
 
     /*
@@ -69,15 +71,17 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
         if (ObjectUtils.isEmpty(cases)) {
             throw new RuntimeException("测试用例不能为空!");
         }
-        for (int i = 0; i < cases.size(); i++) {
-            AiEvalDataset evalDataset = cases.get(i);
-            AiEvalRunRequest finalRequest = request;
-            asyncPool.submit(() -> {
-                AiEvalResult result = "agent".equals(evalDataset.getEvalType())
-                        ? runAgentCase(runId, finalRequest, evalDataset, userId)
-                        : runRagCase(runId, finalRequest, evalDataset, userId);
-                resultService.save(result);
-            });
+        for (AiEvalDataset item : cases) {
+            AiEvalResult result;
+            try {
+                result = "agent".equals(item.getEvalType())
+                        ? runAgentCase(runId, request, item, userId)
+                        : runRagCase(runId, request, item, userId);
+            } catch (Exception e) {
+                log.error("评测用例执行失败: {}", item.getCaseCode(), e);
+                result = buildErrorResult(runId, request, item, userId, e);
+            }
+            resultService.save(result);
         }
         return report(runId);
     }
@@ -123,7 +127,14 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
                 ? List.of(aiEvalDataset.getExpectedToolName())
                 : Collections.emptyList());
 
-        ToolChatResponse resp = toolChatService.chatWithTools(chatReq);
+        String evalUserId = StringUtils.defaultIfBlank(userId, "admin");
+        LoginUser evalUser = new LoginUser();
+        evalUser.setId(evalUserId);
+        evalUser.setUsername(evalUserId);
+        evalUser.setRealname("admin".equalsIgnoreCase(evalUserId) ? "管理员" : evalUserId);
+        evalUser.setRoleCode("admin");
+
+        ToolChatResponse resp = toolChatService.chatWithTools(chatReq, evalUser);
         long cost = System.currentTimeMillis() - start;
 
         BigDecimal toolSelection = scoreTool(resp.getToolCalls(), aiEvalDataset.getExpectedToolName());
@@ -166,15 +177,14 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
      */
     private AiEvalResult runRagCase(String runId, AiEvalRunRequest request, AiEvalDataset aiEvalDataset, String userId) {
         long start = System.currentTimeMillis();
-
         RagChatRequest chatReq = new RagChatRequest();
         chatReq.setQuery(aiEvalDataset.getQuestion());
         chatReq.setKnowledgeBaseId(aiEvalDataset.getKnowledgeBaseId());
         chatReq.setTopK(5);
 
-        RagChatResponse resp = ragChatService.ragChat(chatReq, userId);
+        String evalUserId = StringUtils.defaultIfBlank(userId, "admin");
+        RagChatResponse resp = ragChatService.ragChat(chatReq, evalUserId);
         long cost = System.currentTimeMillis() - start;
-
 
         BigDecimal relevance = scoreKeywords(resp.getAnswer(), aiEvalDataset.getExpectedKeywords());
         BigDecimal refHit = scoreReferences(resp.getReferences(), aiEvalDataset.getExpectedReferences());
@@ -277,7 +287,7 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
 
         try {
             // 优先尝试解析为二维同义词组数组：[["RDB", "快照"], ["AOF", "日志"]]
-            List<List<String>> synonymGroups = JSON.parseObject(expectedKeywordsJson, new TypeReference<List<List<String>>>() {});
+            List<List<String>> synonymGroups = JSON.parseObject(expectedKeywordsJson, new TypeReference<>() {});
             if (synonymGroups != null && !synonymGroups.isEmpty()) {
                 long hitGroupCount = 0;
                 for (List<String> group : synonymGroups) {
@@ -392,11 +402,6 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
                 .agentTaskCompletion(calculateWeightedAvg(results, AiEvalResult::getTaskCompletionScore, caseWeightMap))
                 .results(results)
                 .build();
-    }
-
-    @Override
-    public Map<String, Object> compare(String baseRunId, String targetRunId) {
-        return Map.of();
     }
 
     /**

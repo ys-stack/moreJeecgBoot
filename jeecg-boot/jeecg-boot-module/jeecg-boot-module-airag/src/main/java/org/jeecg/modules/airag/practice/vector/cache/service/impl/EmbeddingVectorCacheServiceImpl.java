@@ -101,21 +101,18 @@ public class EmbeddingVectorCacheServiceImpl implements IEmbeddingVectorCacheSer
                 return FloatVectorCodec.copy(vector);
             }
         } catch (Exception e) {
-            log.warn("读取 Embedding Redis 缓存失败: key={}, error={}",
-                    shortKey(cacheKey), e.getMessage());
+            log.warn("读取 Embedding Redis 缓存失败: key={}, error={}",shortKey(cacheKey), e.getMessage());
         }
 
         AiEmbeddingCache dbCache;
         try {
-            dbCache = embeddingCacheMapper.selectOne(
-                    new LambdaQueryWrapper<AiEmbeddingCache>()
+            dbCache = embeddingCacheMapper.selectOne(new LambdaQueryWrapper<AiEmbeddingCache>()
                             .eq(AiEmbeddingCache::getCacheKey, cacheKey)
                             .last("LIMIT 1")
             );
         } catch (Exception e) {
             // 缓存是优化项，MySQL 缓存表异常时回退到 Embedding API，不能阻断主链路。
-            log.warn("读取 Embedding MySQL 缓存失败: key={}, error={}",
-                    shortKey(cacheKey), e.getMessage());
+            log.warn("读取 Embedding MySQL 缓存失败: key={}, error={}",shortKey(cacheKey), e.getMessage());
             return null;
         }
 

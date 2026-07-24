@@ -50,18 +50,14 @@ public class EmbeddingService {
         return vectors.get(0);
     }
 
-    public List<float[]> embedBatch(
-            List<String> texts,
-            EmbeddingCacheContext context) {
+    public List<float[]> embedBatch(List<String> texts,EmbeddingCacheContext context) {
 
         if (texts == null || texts.isEmpty()) {
             return Collections.emptyList();
         }
 
         if (context == null) {
-            throw new IllegalArgumentException(
-                    "EmbeddingCacheContext 不能为空"
-            );
+            throw new IllegalArgumentException("EmbeddingCacheContext 不能为空");
         }
 
         String modelName = config.getEmbed().getModelName();
