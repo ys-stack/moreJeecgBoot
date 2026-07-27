@@ -9,7 +9,8 @@ import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.shiro.SecurityUtils;
+import org.apache.shiro.authc.AuthenticationException;
+import org.apache.shiro.authz.AuthorizationException;
 import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.modules.airag.practice.cache.context.RagAnswerCacheContext;
 import org.jeecg.modules.airag.practice.cache.entity.FaqCacheItem;
@@ -23,6 +24,7 @@ import org.jeecg.modules.airag.practice.chat.vo.RagChatRequest;
 import org.jeecg.modules.airag.practice.chat.vo.RagChatResponse;
 import org.jeecg.modules.airag.practice.doc.entity.AiKnowledgeBase;
 import org.jeecg.modules.airag.practice.doc.service.IAiKnowledgeBaseService;
+import org.jeecg.modules.airag.practice.security.KnowledgeAccessService;
 import org.jeecg.modules.airag.practice.threadpool.PracticeThreadPool;
 import org.jeecg.modules.airag.practice.util.StringUtils;
 import org.jeecg.modules.airag.practice.vector.service.VectorStoreService;
@@ -92,6 +94,9 @@ public class RagChatService {
     @Resource
     private IKnowledgeCacheVersionService knowledgeCacheVersionService;
 
+    @Resource
+    private KnowledgeAccessService knowledgeAccessService;
+
     private static final String RAG_SYSTEM_PROMPT = """
         你是一个知识库问答助手。请严格根据以下【参考资料】来回答用户的问题。
 
@@ -137,12 +142,28 @@ public class RagChatService {
      * RAG 聊天：用户提问 → 向量检索 → 构建 Prompt → 调模型 → 返回答案
      *
      * @param request 聊天请求（含 query、sessionId、knowledgeBaseId、topK）
-     * @param userId  当前用户ID（从 Shiro 获取，practice 模块暂用固定值）
+     * @param user    当前登录用户，权限计算只使用该显式上下文
      * @return RAG 响应（含 AI 回答 + 参考来源 + token 统计）
      */
+    public RagChatResponse ragChat(RagChatRequest request, LoginUser user) {
+        return ragChat(request, user, null);
+    }
+
+    /**
+     * 评测专用重载：允许使用一个已经从 Prompt 版本表解析出的固定系统提示词。
+     * 普通聊天不开放任意 Prompt，仍走上面的两参数方法和内置安全提示词。
+     */
     @Transactional(rollbackFor = Exception.class)
-    public RagChatResponse ragChat(RagChatRequest request, String userId) {
-        int topK = request.getTopK() != null ? request.getTopK() : 5;
+    public RagChatResponse ragChat(RagChatRequest request, LoginUser user, String systemPromptOverride) {
+        validateRequest(request);
+        if (user == null || user.getId() == null) {
+            throw new AuthenticationException("用户未登录");
+        }
+        String userId = user.getId();
+        int topK = request.getTopK();
+
+        List<String> accessibleKbIds = getAccessibleKnowledgeBaseIds(user);
+        List<String> effectiveKbIds = resolveEffectiveKnowledgeBaseIds(request, accessibleKbIds);
 
         // ==================== Step 1: 会话管理 ====================
         // sessionId 为空 → 首次对话，自动创建会话
@@ -154,8 +175,7 @@ public class RagChatService {
         } else {
             session = getOwnedSession(sessionId, userId);
         }
-        boolean answerCacheEligible = session.getMessageCount() == null
-                || session.getMessageCount() == 0;
+        boolean answerCacheEligible = session.getMessageCount() == null || session.getMessageCount() == 0;
 
         // ==================== Step 2: 保存用户消息 ====================
         AiChatMessage userMsg = new AiChatMessage()
@@ -168,9 +188,6 @@ public class RagChatService {
         messageMapper.insert(userMsg);
 
         // ==================== Step 3: 向量检索（RAG 核心 + 权限过滤） ====================
-        // 获取当前用户可访问的知识库ID列表
-        List<String> accessibleKbIds = getAccessibleKnowledgeBaseIds(userId);
-        List<String> effectiveKbIds = resolveEffectiveKnowledgeBaseIds(request, accessibleKbIds);
         RagAnswerCacheContext answerCacheContext = buildAnswerCacheContext(session, effectiveKbIds);
 
         if (answerCacheEligible) {
@@ -185,23 +202,10 @@ public class RagChatService {
                 ? request.getQuery()
                 : rewriteQuery(session, request.getQuery(), userMsg.getId());
 
-        List<VectorSearchResultVO> searchResults;
-        if (request.getKnowledgeBaseId() != null && !request.getKnowledgeBaseId().isBlank()) {
-            searchResults = vectorStoreService.search(
-                    searchQuery,
-                    topK,
-                    request.getKnowledgeBaseId(),
-                    answerCacheContext.tenantId()
-            );
-        } else {
-            // 未指定知识库 → 在所有可访问的知识库中检索
-            searchResults = vectorStoreService.searchByKnowledgeBaseIds(
-                    searchQuery,
-                    topK,
-                    effectiveKbIds,
-                    answerCacheContext.tenantId()
-            );
-        }
+        List<VectorSearchResultVO> searchResults = effectiveKbIds.size() == 1
+                ? vectorStoreService.search(searchQuery, topK, effectiveKbIds.get(0), answerCacheContext.tenantId())
+                : vectorStoreService.searchByKnowledgeBaseIds(
+                        searchQuery, topK, effectiveKbIds, answerCacheContext.tenantId());
         // 过滤低相关度结果（Rerank 分数通常 0~1，阈值设 0.2~0.3 比较合理）
         double minScore = 0.2;
         List<VectorSearchResultVO> filteredResults = searchResults.stream()
@@ -220,7 +224,8 @@ public class RagChatService {
                 filteredResults,
                 sessionId,
                 request.getQuery(),
-                userMsg.getId()
+                userMsg.getId(),
+                systemPromptOverride
         );
 
         // ==================== Step 5: 调用大模型 ====================
@@ -379,10 +384,30 @@ public class RagChatService {
      *   event: done    → 空字符串（流结束）
      *   event: error   → 错误信息文本
      */
-    public SseEmitter ragChatStream(RagChatRequest request, String userId) {
+    public SseEmitter ragChatStream(RagChatRequest request, LoginUser user) {
         SseEmitter emitter = new SseEmitter(120_000L);
         String requestId = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
-        int topK = request.getTopK() != null ? request.getTopK() : 5;
+        try {
+            validateRequest(request);
+            if (user == null || user.getId() == null) {
+                throw new AuthenticationException("用户未登录");
+            }
+        } catch (RuntimeException e) {
+            sendAndCompleteError(emitter, e.getMessage());
+            return emitter;
+        }
+        String userId = user.getId();
+        int topK = request.getTopK();
+
+        List<String> accessibleKbIds;
+        List<String> effectiveKbIds;
+        try {
+            accessibleKbIds = getAccessibleKnowledgeBaseIds(user);
+            effectiveKbIds = resolveEffectiveKnowledgeBaseIds(request, accessibleKbIds);
+        } catch (RuntimeException e) {
+            sendAndCompleteError(emitter, e.getMessage());
+            return emitter;
+        }
 
         // ===== 前置步骤（同步，快速返回错误给前端） =====
         // Step 1: 会话管理
@@ -418,20 +443,6 @@ public class RagChatService {
         messageMapper.insert(userMsg);
 
         // Step 3: 向量检索（权限过滤）
-        List<String> accessibleKbIds = getAccessibleKnowledgeBaseIds(userId);
-        List<String> effectiveKbIds;
-        try {
-            effectiveKbIds = resolveEffectiveKnowledgeBaseIds(request, accessibleKbIds);
-        } catch (RuntimeException e) {
-            try {
-                emitter.send(SseEmitter.event().name("error").data(e.getMessage()));
-                emitter.complete();
-            } catch (IOException sendError) {
-                emitter.completeWithError(sendError);
-            }
-            return emitter;
-        }
-
         RagAnswerCacheContext answerCacheContext = buildAnswerCacheContext(session, effectiveKbIds);
         if (answerCacheEligible) {
             FaqCacheItem cachedItem = ragAnswerCacheService.get(answerCacheContext, request.getQuery());
@@ -459,22 +470,10 @@ public class RagChatService {
                 ? request.getQuery()
                 : rewriteQuery(session, request.getQuery(), userMsg.getId());
 
-        List<VectorSearchResultVO> searchResults;
-        if (request.getKnowledgeBaseId() != null && !request.getKnowledgeBaseId().isBlank()) {
-            searchResults = vectorStoreService.search(
-                    searchQuery,
-                    topK,
-                    request.getKnowledgeBaseId(),
-                    answerCacheContext.tenantId()
-            );
-        } else {
-            searchResults = vectorStoreService.searchByKnowledgeBaseIds(
-                    searchQuery,
-                    topK,
-                    effectiveKbIds,
-                    answerCacheContext.tenantId()
-            );
-        }
+        List<VectorSearchResultVO> searchResults = effectiveKbIds.size() == 1
+                ? vectorStoreService.search(searchQuery, topK, effectiveKbIds.get(0), answerCacheContext.tenantId())
+                : vectorStoreService.searchByKnowledgeBaseIds(
+                        searchQuery, topK, effectiveKbIds, answerCacheContext.tenantId());
         log.info("[{}] RAG 流式检索完成: 可访问KB={}, 命中chunk={}", requestId, accessibleKbIds.size(), searchResults.size());
 
         // 过滤低相关度结果（Rerank 分数通常 0~1，阈值 0.2）
@@ -502,7 +501,8 @@ public class RagChatService {
                 filteredResults,
                 session.getId(),
                 request.getQuery(),
-                userMsg.getId()
+                userMsg.getId(),
+                null
         );
         String ragContextJson = JSON.toJSONString(filteredResults);
 
@@ -741,10 +741,10 @@ public class RagChatService {
                 .build();
     }
 
-    private List<String> resolveEffectiveKnowledgeBaseIds(
-            RagChatRequest request,
-            List<String> accessibleKbIds) {
-
+    private List<String> resolveEffectiveKnowledgeBaseIds(RagChatRequest request,List<String> accessibleKbIds) {
+        if (accessibleKbIds == null || accessibleKbIds.isEmpty()) {
+            throw new AuthorizationException("当前用户没有可访问的知识库");
+        }
         if (request.getKnowledgeBaseId() != null && !request.getKnowledgeBaseId().isBlank()) {
             if (!accessibleKbIds.contains(request.getKnowledgeBaseId())) {
                 throw new RuntimeException("无权访问该知识库: " + request.getKnowledgeBaseId());
@@ -832,14 +832,17 @@ public class RagChatService {
      * [UserMessage:   当前用户问题]
      */
     private List<ChatMessage> buildRagMessages(List<VectorSearchResultVO> searchResults,
-                                                String sessionId,
-                                                String currentQuery,
-                                                String currentUserMessageId) {
+                                                 String sessionId,
+                                                 String currentQuery,
+                                                 String currentUserMessageId,
+                                                 String systemPromptOverride) {
         List<ChatMessage> messages = new ArrayList<>();
 
         // 1. System Message：RAG 指令 + 检索到的参考资料
         String contextText = buildContextText(searchResults);
-        String systemPrompt = RAG_SYSTEM_PROMPT + "\n\n【参考资料】\n" + contextText;
+        // 评测指定 Prompt 时仅替换指令部分，检索上下文仍由后端拼接，防止模板漏掉知识库资料。
+        String instructions = StringUtils.defaultIfBlank(systemPromptOverride, RAG_SYSTEM_PROMPT);
+        String systemPrompt = instructions + "\n\n【参考资料】\n" + contextText;
         messages.add(new SystemMessage(systemPrompt));
 
         // 2. 历史对话（滑动窗口 + 摘要压缩，由 ConversationMemoryService 统一管理）
@@ -922,47 +925,46 @@ public class RagChatService {
     /**
      * 获取当前用户可访问的知识库ID列表（基于角色权限过滤）
      */
-    public List<String> getAccessibleKnowledgeBaseIds(String userId) {
-        LoginUser loginUser = null;
-        try {
-            loginUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
-        } catch (Exception ignored) {}
-
-        List<String> roleCodes = new ArrayList<>();
-        if (loginUser != null && loginUser.getRoleCode() != null && !loginUser.getRoleCode().isBlank()) {
-            roleCodes = Arrays.stream(loginUser.getRoleCode().split(","))
-                    .map(String::trim)
-                    .filter(s -> !s.isEmpty())
-                    .collect(Collectors.toList());
-        } else if (StringUtils.isNotBlank(userId)) {
-            roleCodes = List.of("admin");
+    public List<String> getAccessibleKnowledgeBaseIds(LoginUser user) {
+        if (user == null || user.getId() == null) {
+            throw new AuthenticationException("用户未登录");
         }
-        List<AiKnowledgeBase> accessibleKbs = knowledgeBaseService.listAccessibleByUser(roleCodes);
-        return accessibleKbs.stream()
-                .map(AiKnowledgeBase::getId)
-                .collect(Collectors.toList());
+        return knowledgeAccessService.readableKnowledgeBaseIds(user);
     }
 
     /**
      * 获取当前用户可访问的知识库列表（供 Controller 调用）
      */
-    public List<AiKnowledgeBase> listAccessibleKnowledgeBases() {
-        LoginUser loginUser = null;
+    public List<AiKnowledgeBase> listAccessibleKnowledgeBases(LoginUser user) {
+        List<String> ids = getAccessibleKnowledgeBaseIds(user);
+        if (ids.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return knowledgeBaseService.listByIds(ids);
+    }
+
+    /** 校验并归一化 RAG 请求，限制问题长度和检索数量。 */
+    private void validateRequest(RagChatRequest request) {
+        if (request == null || request.getQuery() == null || request.getQuery().isBlank()) {
+            throw new IllegalArgumentException("query 不能为空");
+        }
+        if (request.getQuery().length() > 2000) {
+            throw new IllegalArgumentException("query 长度不能超过 2000 个字符");
+        }
+        int topK = request.getTopK() == null ? 5 : request.getTopK();
+        if (topK < 1 || topK > 10) {
+            throw new IllegalArgumentException("topK 必须在 1 到 10 之间");
+        }
+        request.setTopK(topK);
+    }
+
+    /** 向流式客户端发送安全错误并结束连接。 */
+    private void sendAndCompleteError(SseEmitter emitter, String message) {
         try {
-            loginUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
-        } catch (Exception ignored) {}
-
-        if (loginUser == null) {
-            throw new RuntimeException("用户未登录!");
+            emitter.send(SseEmitter.event().name("error").data(message));
+            emitter.complete();
+        } catch (IOException e) {
+            emitter.completeWithError(e);
         }
-
-        List<String> roleCodes = new ArrayList<>();
-        if (loginUser.getRoleCode() != null && !loginUser.getRoleCode().isBlank()) {
-            roleCodes = Arrays.stream(loginUser.getRoleCode().split(","))
-                    .map(String::trim)
-                    .filter(s -> !s.isEmpty())
-                    .collect(Collectors.toList());
-        }
-        return knowledgeBaseService.listAccessibleByUser(roleCodes);
     }
 }

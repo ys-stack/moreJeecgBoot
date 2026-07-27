@@ -4,17 +4,22 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 import jakarta.annotation.Resource;
+import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.jeecg.common.api.vo.Result;
+import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocument;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocumentChunk;
 import org.jeecg.modules.airag.practice.doc.entity.AiKnowledgeBase;
-import org.jeecg.modules.airag.practice.doc.mapper.AiDocumentMapper;
 import org.jeecg.modules.airag.practice.doc.mapper.AiKnowledgeBaseMapper;
 import org.jeecg.modules.airag.practice.doc.service.IAiDocumentChunkService;
 import org.jeecg.modules.airag.practice.doc.vo.DocumentUploadResultVO;
+import org.jeecg.modules.airag.practice.security.KnowledgeAccessService;
+import org.jeecg.modules.airag.practice.security.PracticeSecurityContext;
+import org.jeecg.modules.airag.practice.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -45,7 +50,10 @@ public class AiDocumentChunkController {
     private AiKnowledgeBaseMapper aiKnowledgeBaseMapper;
 
     @Resource
-    private AiDocumentMapper aiDocumentMapper;
+    private PracticeSecurityContext practiceSecurityContext;
+
+    @Resource
+    private KnowledgeAccessService knowledgeAccessService;
 
     // ==================== 文档上传与分片 ====================
 
@@ -59,40 +67,42 @@ public class AiDocumentChunkController {
      * @param knowledgeBaseId 知识库ID（可选，为空则使用默认知识库）
      * @return 上传结果，含分片统计和前5条预览
      */
+    @RequiresPermissions("practice:doc:upload")
     @PostMapping("/upload")
     @Operation(summary = "上传文档并解析切分")
     public Result<DocumentUploadResultVO> upload(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "knowledgeBaseId", required = false) String knowledgeBaseId) {
-        try {
-            DocumentUploadResultVO result = aiDocumentChunkService.uploadAndParse(file, knowledgeBaseId);
-            return Result.OK(result);
-        } catch (IllegalArgumentException e) {
-            return Result.error(e.getMessage());
-        } catch (Exception e) {
-            log.error("文档上传解析失败", e);
-            return Result.error("文档处理失败: " + e.getMessage());
+        LoginUser loginUser = practiceSecurityContext.requireUser();
+        if (StringUtils.isBlank(knowledgeBaseId)) {
+            return Result.error("knowledgeBaseId 不能为空");
         }
+        knowledgeAccessService.requireManageableKnowledgeBase(knowledgeBaseId, loginUser);
+        return Result.OK(aiDocumentChunkService.uploadAndParse(file, knowledgeBaseId, loginUser.getId()));
     }
 
     /**
      * 查询某文档的所有分片
      */
+    @RequiresPermissions("practice:doc:list")
     @GetMapping("/chunks/{documentId}")
     @Operation(summary = "查询文档分片列表")
     public Result<List<AiDocumentChunk>> listChunks(@PathVariable String documentId) {
-        List<AiDocumentChunk> chunks = aiDocumentChunkService.listByDocumentId(documentId);
-        return Result.OK(chunks);
+        LoginUser user = practiceSecurityContext.requireUser();
+        knowledgeAccessService.requireReadableDocument(documentId, user);
+        return Result.OK(aiDocumentChunkService.listByDocumentId(documentId));
     }
 
     /**
      * 删除某文档及其所有分片
      */
+    @RequiresPermissions("practice:doc:delete")
     @DeleteMapping("/{documentId}")
     @Operation(summary = "删除文档及其所有分片")
     public Result<Integer> deleteDocument(@PathVariable String documentId) {
-        int count = aiDocumentChunkService.deleteDocumentAndChunks(documentId);
-        return Result.OK("已删除文档及 " + count + " 条分片", count);
+        LoginUser user = practiceSecurityContext.requireUser();
+        knowledgeAccessService.requireManageableDocument(documentId, user);
+        return Result.OK(aiDocumentChunkService.deleteDocumentAndChunks(documentId));
     }
 
     // ==================== 知识库管理 ====================
@@ -100,19 +110,27 @@ public class AiDocumentChunkController {
     /**
      * 查询所有知识库
      */
+    @RequiresPermissions("practice:doc:list")
     @GetMapping("/kb/list")
     @Operation(summary = "查询所有知识库")
     public Result<List<AiKnowledgeBase>> listKnowledgeBases() {
-        List<AiKnowledgeBase> list = aiKnowledgeBaseMapper.selectList(null);
+        LoginUser user = practiceSecurityContext.requireUser();
+        List<String> ids = knowledgeAccessService.readableKnowledgeBaseIds(user);
+        List<AiKnowledgeBase> list = ids.isEmpty()
+                ? Collections.emptyList()
+                : aiKnowledgeBaseMapper.selectByIds(ids);
         return Result.OK(list);
     }
 
     /**
      * 查询某知识库下的文档列表
      */
+    @RequiresPermissions("practice:doc:list")
     @GetMapping("/kb/{kbId}/docs")
     @Operation(summary = "查询知识库下的文档列表")
     public Result<List<AiDocument>> listDocsByKnowledgeBase(@PathVariable String kbId) {
+        LoginUser user = practiceSecurityContext.requireUser();
+        knowledgeAccessService.requireReadableKnowledgeBase(kbId, user);
         List<AiDocument> docs = aiDocumentChunkService.listDocumentsByKnowledgeBase(kbId);
         return Result.OK(docs);
     }

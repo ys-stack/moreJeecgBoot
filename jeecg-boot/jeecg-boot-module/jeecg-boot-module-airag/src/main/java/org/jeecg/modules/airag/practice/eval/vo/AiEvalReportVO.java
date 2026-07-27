@@ -56,6 +56,9 @@ public class AiEvalReportVO implements Serializable {
     @Schema(description = "RAG引用命中平均分")
     private BigDecimal ragReferenceHit;
 
+    /** RAG召回片段关键词命中平均分 */
+    private BigDecimal ragChunkHit;
+
     /** RAG用例：防幻觉拒答加权平均分 (针对知识库无答案/越权时是否正确拒答) */
     @Schema(description = "RAG拒答平均分")
     private BigDecimal ragReject;
@@ -71,6 +74,24 @@ public class AiEvalReportVO implements Serializable {
     /** Agent用例：任务完成度加权平均分 (针对工具执行后最终回复与预期结果的比对) */
     @Schema(description = "Agent任务完成平均分")
     private BigDecimal agentTaskCompletion;
+
+    /** Agent二次确认行为平均分 */
+    private BigDecimal agentConfirmation;
+
+    /** 单用例平均耗时，毫秒 */
+    private BigDecimal avgDurationMs;
+
+    /** 单用例P95耗时，毫秒 */
+    private Long p95DurationMs;
+
+    /** 本次运行累计输入Token */
+    private Long totalPromptTokens;
+
+    /** 本次运行累计输出Token */
+    private Long totalCompletionTokens;
+
+    /** 本次运行累计Token */
+    private Long totalTokens;
 
     /** 逐条用例的详细执行与评分结果列表 */
     @Schema(description = "逐用例评测结果明细列表")

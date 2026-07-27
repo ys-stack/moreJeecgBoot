@@ -22,5 +22,5 @@ public interface BatchParseService {
      * @param knowledgeBaseId 目标知识库ID
      * @return 批量解析结果
      */
-    BatchParseResultVO batchUploadAndParse(FileUpload[] files, String knowledgeBaseId);
+    BatchParseResultVO batchUploadAndParse(FileUpload[] files, String knowledgeBaseId, String operatorId);
 }

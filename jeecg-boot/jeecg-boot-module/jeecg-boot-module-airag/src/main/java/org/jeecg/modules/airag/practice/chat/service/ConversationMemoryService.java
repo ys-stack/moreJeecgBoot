@@ -8,6 +8,7 @@ import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.shiro.authz.AuthorizationException;
 import org.jeecg.modules.airag.practice.chat.entity.AiChatMessage;
 import org.jeecg.modules.airag.practice.chat.entity.AiChatSession;
 import org.jeecg.modules.airag.practice.chat.entity.AiToolChatCase;
@@ -320,7 +321,8 @@ public class ConversationMemoryService {
      * @param sessionId 会话ID
      * @return 结构化总结文本
      */
-    public String generateSessionEndSummary(String sessionId) {
+    public String generateSessionEndSummary(String sessionId, String userId) {
+        AiChatSession session = requireOwnedSession(sessionId, userId);
         List<AiChatMessage> allMessages = messageMapper.selectList(
                 new LambdaQueryWrapper<AiChatMessage>()
                         .eq(AiChatMessage::getSessionId, sessionId)
@@ -344,7 +346,6 @@ public class ConversationMemoryService {
                 sessionId, allMessages.size(), costMs);
 
         // 同时更新到 session.summary（覆盖之前的自动摘要）
-        AiChatSession session = sessionMapper.selectById(sessionId);
         if (session != null && summary != null && !summary.isBlank()) {
             session.setSummary(summary);
             session.setUpdateTime(new Date());
@@ -372,11 +373,7 @@ public class ConversationMemoryService {
      */
     public AiToolChatCase saveAsCase(String sessionId, String caseName, String scenario,
                                      String description, String expectedTools, String userId) {
-        // 校验会话存在
-        AiChatSession session = sessionMapper.selectById(sessionId);
-        if (session == null) {
-            throw new RuntimeException("会话不存在: " + sessionId);
-        }
+        requireOwnedSession(sessionId, userId);
 
         // 从会话消息中自动提取实际调用的工具
         String actualTools = extractActualTools(sessionId);
@@ -408,13 +405,31 @@ public class ConversationMemoryService {
     /**
      * 查询用例列表（按创建时间倒序）
      */
-    public List<AiToolChatCase> listCases(String scenario) {
+    public List<AiToolChatCase> listCases(String scenario, String userId, boolean allowAll) {
         LambdaQueryWrapper<AiToolChatCase> wrapper = new LambdaQueryWrapper<>();
+        if (!allowAll) {
+            wrapper.eq(AiToolChatCase::getUserId, userId);
+        }
         if (scenario != null && !scenario.isBlank()) {
             wrapper.eq(AiToolChatCase::getScenario, scenario);
         }
         wrapper.orderByDesc(AiToolChatCase::getCreateTime);
         return chatCaseService.list(wrapper);
+    }
+
+    /**
+     * 按会话 ID、用户 ID 和有效状态校验归属，防止通过 ID 读取或加工他人会话。
+     */
+    private AiChatSession requireOwnedSession(String sessionId, String userId) {
+        AiChatSession session = sessionMapper.selectOne(
+                new LambdaQueryWrapper<AiChatSession>()
+                        .eq(AiChatSession::getId, sessionId)
+                        .eq(AiChatSession::getUserId, userId)
+                        .eq(AiChatSession::getStatus, "active"));
+        if (session == null) {
+            throw new AuthorizationException("会话不存在或无权访问");
+        }
+        return session;
     }
 
     // ======================== 内部方法 ========================

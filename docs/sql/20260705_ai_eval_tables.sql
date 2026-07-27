@@ -19,11 +19,13 @@ CREATE TABLE IF NOT EXISTS `ai_eval_dataset` (
   `expected_answer` text DEFAULT NULL COMMENT '预期答案或答案要点',
   `expected_keywords` varchar(1000) DEFAULT NULL COMMENT '预期关键词JSON数组',
   `expected_references` text DEFAULT NULL COMMENT '预期引用JSON数组，可存 chunkId / docId / 文件名',
+  `expected_chunk_keywords` text DEFAULT NULL COMMENT '预期召回片段关键词JSON数组',
   `expected_reject` tinyint(1) NOT NULL DEFAULT 0 COMMENT '是否预期拒答：0否 1是',
 
   `expected_tool_name` varchar(100) DEFAULT NULL COMMENT 'Agent 预期调用工具编码',
   `expected_tool_params` text DEFAULT NULL COMMENT 'Agent 预期工具参数JSON',
   `expected_task_result` text DEFAULT NULL COMMENT 'Agent 预期任务结果或校验点',
+  `should_require_confirm` tinyint(1) NOT NULL DEFAULT 0 COMMENT 'Agent是否应要求二次确认：0否 1是',
 
   `difficulty` varchar(20) DEFAULT 'normal' COMMENT '难度：easy / normal / hard',
   `weight` decimal(6,2) NOT NULL DEFAULT 1.00 COMMENT '用例权重',
@@ -45,6 +47,34 @@ CREATE TABLE IF NOT EXISTS `ai_eval_dataset` (
   KEY `idx_tenant_id` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI评测集';
 
+CREATE TABLE IF NOT EXISTS `ai_eval_run` (
+  `id` varchar(36) NOT NULL COMMENT '运行ID',
+  `run_name` varchar(128) NOT NULL COMMENT '运行名称',
+  `status` varchar(20) NOT NULL COMMENT 'PENDING/RUNNING/COMPLETED/FAILED/INTERRUPTED',
+  `eval_type` varchar(20) DEFAULT NULL COMMENT '本次运行的用例类型筛选',
+  `prompt_code` varchar(64) DEFAULT NULL COMMENT '实际使用的Prompt编码',
+  `prompt_version` int DEFAULT NULL COMMENT '实际使用的Prompt版本',
+  `model_provider` varchar(50) DEFAULT NULL COMMENT '模型供应商',
+  `model_name` varchar(100) DEFAULT NULL COMMENT '实际配置的模型名称',
+  `request_json` text DEFAULT NULL COMMENT '运行请求快照',
+  `case_snapshot` mediumtext DEFAULT NULL COMMENT '本次运行用例及黄金标注快照',
+  `total_cases` int NOT NULL DEFAULT 0 COMMENT '总用例数',
+  `processed_cases` int NOT NULL DEFAULT 0 COMMENT '已处理用例数',
+  `passed_cases` int NOT NULL DEFAULT 0 COMMENT '通过用例数',
+  `current_case_code` varchar(64) DEFAULT NULL COMMENT '当前用例编码',
+  `error_msg` varchar(1000) DEFAULT NULL COMMENT '任务级错误',
+  `start_time` datetime DEFAULT NULL COMMENT '开始时间',
+  `end_time` datetime DEFAULT NULL COMMENT '结束时间',
+  `create_by` varchar(50) NOT NULL COMMENT '运行发起人ID',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` datetime DEFAULT NULL COMMENT '最后进度更新时间',
+  `tenant_id` varchar(10) DEFAULT '0' COMMENT '租户ID',
+  PRIMARY KEY (`id`),
+  KEY `idx_eval_run_owner` (`create_by`, `create_time`),
+  KEY `idx_eval_run_status` (`status`),
+  KEY `idx_eval_run_tenant` (`tenant_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI评测运行';
+
 CREATE TABLE IF NOT EXISTS `ai_eval_result` (
   `id` varchar(36) NOT NULL COMMENT '主键ID',
   `run_id` varchar(36) NOT NULL COMMENT '评测运行ID，同一次评测共用',
@@ -59,6 +89,7 @@ CREATE TABLE IF NOT EXISTS `ai_eval_result` (
   `model_name` varchar(100) DEFAULT NULL COMMENT '模型名称',
 
   `question` text DEFAULT NULL COMMENT '用户输入问题快照',
+  `case_weight` decimal(6,2) NOT NULL DEFAULT 1.00 COMMENT '执行时用例权重快照',
   `actual_answer` text DEFAULT NULL COMMENT '模型实际回答',
   `actual_references` text DEFAULT NULL COMMENT 'RAG 实际引用JSON',
   `actual_tool_calls` text DEFAULT NULL COMMENT 'Agent 实际工具调用JSON',
@@ -66,10 +97,12 @@ CREATE TABLE IF NOT EXISTS `ai_eval_result` (
 
   `answer_relevance_score` decimal(5,2) DEFAULT NULL COMMENT 'RAG回答相关性得分，0-100',
   `reference_hit_score` decimal(5,2) DEFAULT NULL COMMENT 'RAG引用命中得分，0-100',
+  `chunk_hit_score` decimal(5,2) DEFAULT NULL COMMENT 'RAG召回片段关键词命中得分，0-100',
   `reject_score` decimal(5,2) DEFAULT NULL COMMENT 'RAG拒答得分，0-100',
   `tool_selection_score` decimal(5,2) DEFAULT NULL COMMENT 'Agent工具选择得分，0-100',
   `param_accuracy_score` decimal(5,2) DEFAULT NULL COMMENT 'Agent参数准确得分，0-100',
   `task_completion_score` decimal(5,2) DEFAULT NULL COMMENT 'Agent任务完成得分，0-100',
+  `confirmation_score` decimal(5,2) DEFAULT NULL COMMENT 'Agent二次确认行为得分，0-100',
   `total_score` decimal(5,2) DEFAULT NULL COMMENT '综合得分，0-100',
   `passed` tinyint(1) DEFAULT NULL COMMENT '是否通过：0否 1是',
 

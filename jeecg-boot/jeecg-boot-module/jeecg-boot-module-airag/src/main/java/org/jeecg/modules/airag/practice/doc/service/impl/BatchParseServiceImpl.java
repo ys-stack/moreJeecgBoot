@@ -106,7 +106,7 @@ public class BatchParseServiceImpl implements BatchParseService {
     private static final long FILE_TIMEOUT_MINUTES = 5;
 
     @Override
-    public BatchParseResultVO batchUploadAndParse(FileUpload[] files, String knowledgeBaseId) {
+    public BatchParseResultVO batchUploadAndParse(FileUpload[] files, String knowledgeBaseId, String operatorId) {
         // ========== 1. 校验知识库 ==========
         AiKnowledgeBase kb = getOrCreateKnowledgeBase(knowledgeBaseId);
         String kbId = kb.getId();
@@ -122,7 +122,7 @@ public class BatchParseServiceImpl implements BatchParseService {
             final int index = i + 1;
             Future<ProcessResult> future = asyncPool.submit(() -> {
                 log.debug("开始处理第 {} 个文件: {}", index, file.fileName());
-                return processSingleFile(file, kbId);
+                return processSingleFile(file, kbId, operatorId);
             });
             futures.add(future);
         }
@@ -175,7 +175,7 @@ public class BatchParseServiceImpl implements BatchParseService {
      * 处理单个文件：校验 → 建文档记录 → 存文件 → 调Python → 存分片 → 向量化
      * 所有异常在此方法内捕获，不向上抛出
      */
-    private ProcessResult processSingleFile(FileUpload file, String kbId) {
+    private ProcessResult processSingleFile(FileUpload file, String kbId, String operatorId) {
         String fileName = file.fileName();
         ProcessResult pr = new ProcessResult();
         pr.fileName = fileName;
@@ -196,6 +196,7 @@ public class BatchParseServiceImpl implements BatchParseService {
                     .setFileName(fileName)
                     .setFileSize(file.size())
                     .setStatus("parsing")
+                    .setCreateBy(operatorId)
                     .setCreateTime(new Date());
             aiDocumentMapper.insert(doc);
 
@@ -327,32 +328,14 @@ public class BatchParseServiceImpl implements BatchParseService {
     }
 
     private AiKnowledgeBase getOrCreateKnowledgeBase(String knowledgeBaseId) {
-        if (StringUtils.isNotBlank(knowledgeBaseId)) {
-            AiKnowledgeBase kb = aiKnowledgeBaseMapper.selectById(knowledgeBaseId);
-            if (kb != null) {
-                return kb;
-            }
-            log.warn("指定知识库不存在({}), 将使用默认知识库", knowledgeBaseId);
+        if (StringUtils.isBlank(knowledgeBaseId)) {
+            throw new IllegalArgumentException("knowledgeBaseId 不能为空");
         }
-
-        List<AiKnowledgeBase> defaults = aiKnowledgeBaseMapper.selectList(
-                new LambdaQueryWrapper<AiKnowledgeBase>()
-                        .eq(AiKnowledgeBase::getName, DEFAULT_KB_NAME)
-                        .last("LIMIT 1"));
-        if (!defaults.isEmpty()) {
-            return defaults.get(0);
+        AiKnowledgeBase knowledgeBase = aiKnowledgeBaseMapper.selectById(knowledgeBaseId);
+        if (knowledgeBase == null || !"active".equals(knowledgeBase.getStatus())) {
+            throw new IllegalArgumentException("知识库不存在或已停用");
         }
-
-        AiKnowledgeBase newKb = new AiKnowledgeBase()
-                .setName(DEFAULT_KB_NAME)
-                .setDescription("系统自动创建的默认知识库")
-                .setStatus("active")
-                .setDocCount(0)
-                .setChunkCount(0)
-                .setCreateTime(new Date());
-        aiKnowledgeBaseMapper.insert(newKb);
-        log.info("创建默认知识库: id={}, name={}", newKb.getId(), DEFAULT_KB_NAME);
-        return newKb;
+        return knowledgeBase;
     }
 
     private String saveOriginalFile(FileUpload file, String documentId) {

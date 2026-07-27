@@ -9,9 +9,11 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.shiro.SecurityUtils;
+import org.apache.shiro.authz.AuthorizationException;
 import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.modules.airag.practice.tool.entity.AiToolCallLog;
 import org.jeecg.modules.airag.practice.tool.entity.AiToolDefinition;
+import org.jeecg.modules.airag.practice.tool.entity.AiPendingToolCall;
 import org.jeecg.modules.airag.practice.tool.handler.AbstractToolHandler;
 import org.jeecg.modules.airag.practice.tool.ToolContext;
 import org.jeecg.modules.airag.practice.tool.handler.ToolHandler;
@@ -20,7 +22,6 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * 工具调用服务
@@ -93,16 +94,17 @@ public class ToolCallingService {
         if (activeTools.isEmpty()) {
             return new ToolBundle(Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap());
         }
-
-        List<String> userRoles = getUserRoleCodes(currentUser);
-        Set<String> toolIdSet;
-        if (userRoles.isEmpty()) {
-            log.info("[ToolCalling] 无登录用户，跳过权限过滤，加载全部 active 工具");
-            toolIdSet = activeTools.stream().map(AiToolDefinition::getId).collect(Collectors.toSet());
-        } else {
-            List<String> toolIds = aiToolRolePermissionService.getPermittedToolIds(userRoles);
-            toolIdSet = new HashSet<>(toolIds);
+        if (currentUser == null) {
+            log.warn("[ToolCalling] 未登录，拒绝加载工具");
+            return new ToolBundle(List.of(), Map.of(), Map.of());
         }
+        List<String> userRoles = getUserRoleCodes(currentUser);
+        if (userRoles.isEmpty()) {
+            log.warn("[ToolCalling] userId={} 无角色，拒绝加载工具", currentUser.getId());
+            return new ToolBundle(List.of(), Map.of(), Map.of());
+        }
+        Set<String> toolIdSet = new HashSet<>(
+                aiToolRolePermissionService.getPermittedToolIds(userRoles));
 
         List<ToolSpecification> specs = new ArrayList<>();
         Map<String, ToolHandler> handlerMap = new LinkedHashMap<>();
@@ -131,31 +133,64 @@ public class ToolCallingService {
         return new ToolBundle(specs, handlerMap, defMap);
     }
 
+
+    private void assertToolPermission(AiToolDefinition def, LoginUser user) {
+        if (def == null || user == null || !"active".equals(def.getStatus())) {
+            throw new AuthorizationException("工具不存在或无权调用");
+        }
+        List<String> roles = getUserRoleCodes(user);
+        if (roles.isEmpty()) {
+            throw new AuthorizationException("工具不存在或无权调用");
+        }
+        List<String> permitted = aiToolRolePermissionService.getPermittedToolIds(roles);
+        if (!permitted.contains(def.getId())) {
+            throw new AuthorizationException("工具不存在或无权调用");
+        }
+    }
+
     /**
-     * 执行单个工具并记录日志（供 ToolChatService 手动调用）
-     *
-     * @param toolCode  工具编码
-     * @param handler   工具处理器
-     * @param def       工具定义
-     * @param argsJson  参数 JSON 字符串
-     * @param sessionId 会话 ID
-     * @param messageId 消息 ID
-     * @return 工具执行结果 JSON 字符串
+     * 按工具编码重新读取启用中的定义，并校验当前用户是否仍有执行权限。
      */
-    public String executeTool(String toolCode, ToolHandler handler, AiToolDefinition def,
-                              String argsJson, String sessionId, String messageId) {
-        LoginUser currentUser = null;
-        try {
-            currentUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
-        } catch (Exception ignored) {}
-        return executeTool(toolCode, handler, def, argsJson, sessionId, messageId, currentUser);
+    public AiToolDefinition assertExecutable(String toolCode, LoginUser user) {
+        if (toolCode == null || toolCode.isBlank()) {
+            throw new IllegalArgumentException("toolCode 不能为空");
+        }
+        AiToolDefinition def = aiToolDefinitionService.lambdaQuery()
+                .eq(AiToolDefinition::getToolCode, toolCode)
+                .eq(AiToolDefinition::getStatus, "active")
+                .one();
+        assertToolPermission(def, user);
+        if (!"JAVA_BEAN".equals(def.getEndpointType())) {
+            throw new AuthorizationException("不支持的工具端点类型");
+        }
+        return def;
+    }
+
+    /**
+     * 在创建确认单前调用 Handler 的只校验入口，不触发真实业务操作。
+     */
+    public void validateArguments(String toolCode, String argsJson, LoginUser user) {
+        AiToolDefinition def = assertExecutable(toolCode, user);
+        ToolHandler handler = applicationContext.getBean(def.getHandlerRef(), ToolHandler.class);
+        List<String> errors = handler.validateArguments(argsJson);
+        if (errors != null && !errors.isEmpty()) {
+            throw new IllegalArgumentException("工具参数不合法: " + String.join("; ", errors));
+        }
     }
 
     /**
      * 执行工具（支持外部显式传入用户，如评测引擎传入专有 admin 账号；无显式用户且未登录时抛未登录异常）
      */
     public String executeTool(String toolCode, ToolHandler handler, AiToolDefinition def,
-                              String argsJson, String sessionId, String messageId, LoginUser currentUser) {
+                               String argsJson, String sessionId, String messageId, LoginUser currentUser) {
+        return executeToolByCode(toolCode, argsJson, sessionId, messageId, currentUser, null);
+    }
+
+    /**
+     * 统一工具执行入口：重读定义、二次授权、设置用户上下文并写入审计日志。
+     */
+    public String executeToolByCode(String toolCode, String argsJson, String sessionId,
+                                    String messageId, LoginUser currentUser, String pendingCallId) {
         if (currentUser == null) {
             try {
                 currentUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
@@ -164,6 +199,8 @@ public class ToolCallingService {
         if (currentUser == null) {
             throw new RuntimeException("用户未登录，无法执行工具!");
         }
+        AiToolDefinition def = assertExecutable(toolCode, currentUser);
+        ToolHandler handler = applicationContext.getBean(def.getHandlerRef(), ToolHandler.class);
         ToolContext ctx = new ToolContext(currentUser, sessionId, messageId);
         AbstractToolHandler.setContext(ctx);
 
@@ -174,19 +211,48 @@ public class ToolCallingService {
 
         try {
             result = handler.execute(argsJson);
+            if (isErrorResult(result)) {
+                status = "error";
+                errorMsg = readError(result);
+            }
         } catch (Exception e) {
             status = "error";
-            errorMsg = e.getMessage();
-            result = "{\"error\": \"工具执行异常: " + e.getMessage() + "\"}";
+            errorMsg = "工具执行异常";
+            result = "{\"error\":\"工具执行失败\"}";
             log.error("[{}] 工具执行异常: {}", toolCode, e.getMessage(), e);
         } finally {
             AbstractToolHandler.clearContext();
         }
 
         long duration = System.currentTimeMillis() - start;
-        logCall(def, argsJson, result, duration, status, errorMsg, sessionId);
+        logCall(def, argsJson, result, duration, status, errorMsg,
+                sessionId, messageId, pendingCallId, currentUser);
 
         return result;
+    }
+
+    /**
+     * 通过解析 JSON 顶层状态判断工具是否失败，避免使用字符串包含关系误判。
+     */
+    public boolean isErrorResult(String result) {
+        if (result == null || result.isBlank()) {
+            return true;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(result);
+            return node.hasNonNull("error")
+                    || (node.has("success") && !node.path("success").asBoolean(true));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private String readError(String result) {
+        try {
+            return truncate(objectMapper.readTree(result).path("error").asText("工具执行失败"), 1000);
+        } catch (Exception e) {
+            return "工具执行失败";
+        }
     }
 
     // ======================== 内部方法 ========================
@@ -294,22 +360,52 @@ public class ToolCallingService {
      * 记录工具调用日志
      */
     private void logCall(AiToolDefinition def, String argsJson, String result,
-                         long duration, String status, String errorMsg, String sessionId) {
+                         long duration, String status, String errorMsg, String sessionId,
+                         String messageId, String pendingCallId, LoginUser user) {
         try {
             AiToolCallLog callLog = new AiToolCallLog();
             callLog.setSessionId(sessionId);
+            callLog.setMessageId(messageId);
+            callLog.setPendingCallId(pendingCallId);
             callLog.setToolCode(def.getToolCode());
             callLog.setToolName(def.getToolName());
-            callLog.setInputParams(argsJson);
-            callLog.setOutputResult(result);
+            callLog.setInputParams(truncate(argsJson, 2000));
+            callLog.setOutputResult(truncate(result, 4000));
             callLog.setStatus(status);
-            callLog.setErrorMsg(errorMsg);
-            callLog.setDurationMs((int) duration);
+            callLog.setErrorMsg(truncate(errorMsg, 1000));
+            callLog.setDurationMs((int) Math.min(duration, Integer.MAX_VALUE));
             callLog.setModelName(modelName);
+            callLog.setCreateBy(user.getId());
             callLog.setCreateTime(new Date());
             aiToolCallLogService.save(callLog);
         } catch (Exception e) {
             log.warn("记录工具调用日志失败: {}", e.getMessage());
         }
+    }
+
+    /** 记录写工具等待用户确认的审计事件。 */
+    public void auditPending(AiPendingToolCall pending, LoginUser user) {
+        AiToolDefinition def = assertExecutable(pending.getToolCode(), user);
+        logCall(def, pending.getArgumentsJson(), null, 0, "pending_confirm", null,
+                pending.getSessionId(), pending.getMessageId(), pending.getId(), user);
+    }
+
+    /** 将当前用户对应确认单的待确认审计记录更新为已取消。 */
+    public void auditCancelled(String pendingCallId, LoginUser user) {
+        AiToolCallLog audit = aiToolCallLogService.lambdaQuery()
+                .eq(AiToolCallLog::getPendingCallId, pendingCallId)
+                .eq(AiToolCallLog::getCreateBy, user.getId())
+                .eq(AiToolCallLog::getStatus, "pending_confirm")
+                .one();
+        if (audit != null) {
+            audit.setStatus("cancelled");
+            aiToolCallLogService.updateById(audit);
+        }
+    }
+
+    private String truncate(String value, int maxLength) {
+        return value == null || value.length() <= maxLength
+                ? value
+                : value.substring(0, maxLength);
     }
 }

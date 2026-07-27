@@ -91,7 +91,7 @@ public class AiDocumentChunkServiceImpl
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public DocumentUploadResultVO uploadAndParse(MultipartFile file, String knowledgeBaseId) {
+    public DocumentUploadResultVO uploadAndParse(MultipartFile file, String knowledgeBaseId, String operatorId) {
         // ========== 1. 文件校验 ==========
         validateFile(file);
         String originalFileName = file.getOriginalFilename();
@@ -109,6 +109,7 @@ public class AiDocumentChunkServiceImpl
                 .setFileName(originalFileName)
                 .setFileSize(file.getSize())
                 .setStatus("pending")
+                .setCreateBy(operatorId)
                 .setCreateTime(new Date());
         aiDocumentMapper.insert(doc);
         log.info("创建文档记录: id={}, title={}, status=pending", documentId, doc.getTitle());
@@ -273,36 +274,14 @@ public class AiDocumentChunkServiceImpl
      * 获取或创建默认知识库
      */
     private AiKnowledgeBase getOrCreateKnowledgeBase(String knowledgeBaseId) {
-        if (StringUtils.isNotBlank(knowledgeBaseId)) {
-            AiKnowledgeBase kb = aiKnowledgeBaseMapper.selectById(knowledgeBaseId);
-            if (kb != null) {
-                return kb;
-            }
-            log.warn("指定知识库不存在({}), 将使用默认知识库", knowledgeBaseId);
+        if (StringUtils.isBlank(knowledgeBaseId)) {
+            throw new IllegalArgumentException("knowledgeBaseId 不能为空");
         }
-
-        // 查找或创建默认知识库
-        List<AiKnowledgeBase> defaults = aiKnowledgeBaseMapper.selectList(
-                new LambdaQueryWrapper<AiKnowledgeBase>()
-                        .eq(AiKnowledgeBase::getName, DEFAULT_KB_NAME)
-                        .last("LIMIT 1")
-        );
-
-        if (!defaults.isEmpty()) {
-            return defaults.get(0);
+        AiKnowledgeBase knowledgeBase = aiKnowledgeBaseMapper.selectById(knowledgeBaseId);
+        if (knowledgeBase == null || !"active".equals(knowledgeBase.getStatus())) {
+            throw new IllegalArgumentException("知识库不存在或已停用");
         }
-
-        // 创建默认知识库
-        AiKnowledgeBase newKb = new AiKnowledgeBase()
-                .setName(DEFAULT_KB_NAME)
-                .setDescription("系统自动创建的默认知识库")
-                .setStatus("active")
-                .setDocCount(0)
-                .setChunkCount(0)
-                .setCreateTime(new Date());
-        aiKnowledgeBaseMapper.insert(newKb);
-        log.info("创建默认知识库: id={}, name={}", newKb.getId(), DEFAULT_KB_NAME);
-        return newKb;
+        return knowledgeBase;
     }
 
     /**

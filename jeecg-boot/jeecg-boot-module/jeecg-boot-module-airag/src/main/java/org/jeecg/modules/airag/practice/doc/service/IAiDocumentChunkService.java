@@ -34,7 +34,7 @@ public interface IAiDocumentChunkService extends IService<AiDocumentChunk> {
      * @param knowledgeBaseId 知识库ID（为空则使用默认知识库）
      * @return 上传结果（含分片统计）
      */
-    DocumentUploadResultVO uploadAndParse(MultipartFile file, String knowledgeBaseId);
+    DocumentUploadResultVO uploadAndParse(MultipartFile file, String knowledgeBaseId, String operatorId);
 
     /**
      * 查询某文档的所有分片（按 chunkIndex 排序）

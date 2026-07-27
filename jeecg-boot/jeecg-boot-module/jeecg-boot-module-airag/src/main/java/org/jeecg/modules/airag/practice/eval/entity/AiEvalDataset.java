@@ -73,6 +73,9 @@ public class AiEvalDataset implements Serializable {
     @Schema(description = "预期引用JSON数组")
     private String expectedReferences;
 
+    /** [RAG专用] 期望召回片段中出现的关键词 JSON 数组 */
+    private String expectedChunkKeywords;
+
     /** [RAG专用] 是否预期拒答：0=应正常回答，1=应明确拒答（用于知识库外问题、敏感词或防硬编幻觉测试） */
     @Schema(description = "是否预期拒答：0否 1是")
     private Integer expectedReject;
@@ -88,6 +91,9 @@ public class AiEvalDataset implements Serializable {
     /** [Agent专用] 预期任务结果：Agent 执行完工具后的期望输出关键词或状态校验点 */
     @Schema(description = "Agent预期任务结果或校验点")
     private String expectedTaskResult;
+
+    /** [Agent专用] 是否应要求二次确认：0否 1是 */
+    private Integer shouldRequireConfirm;
 
     /** 用例难度等级：easy(简单)、normal(普通)、hard(困难) */
     @Excel(name = "难度", width = 12)

@@ -233,9 +233,18 @@
             <a-select-option value="agent">仅 Agent 工具调用用例</a-select-option>
           </a-select>
         </a-form-item>
-        <a-form-item label="指定模型名称 (可选)">
-          <a-input v-model:value="runForm.modelName" placeholder="如：mimo-v2.5-pro / qwen2.5-72b，留空使用默认模型" />
-        </a-form-item>
+        <a-row :gutter="16">
+          <a-col :span="16">
+            <a-form-item label="Prompt编码 (可选)">
+              <a-input v-model:value="runForm.promptCode" placeholder="留空使用系统内置Prompt" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="8">
+            <a-form-item label="Prompt版本">
+              <a-input-number v-model:value="runForm.promptVersion" :min="1" style="width: 100%" placeholder="最新启用版" />
+            </a-form-item>
+          </a-col>
+        </a-row>
         <a-form-item label="执行方式">
           <a-radio-group v-model:value="runForm.asyncMode">
             <a-radio :value="true">异步后台执行（推荐，实时进度条轮询）</a-radio>
@@ -290,13 +299,16 @@
 
         <a-card title="RAG 知识库评测维度" size="small" style="margin-bottom: 16px">
           <a-row :gutter="16">
-            <a-col :span="8">
+            <a-col :span="6">
               <a-statistic title="回答相关性 (Relevance)" :value="reportData.ragAnswerRelevance || 0" suffix="分" />
             </a-col>
-            <a-col :span="8">
+            <a-col :span="6">
               <a-statistic title="引用命中率 (Ref Hit)" :value="reportData.ragReferenceHit || 0" suffix="分" />
             </a-col>
-            <a-col :span="8">
+            <a-col :span="6">
+              <a-statistic title="片段关键词命中" :value="reportData.ragChunkHit || 0" suffix="分" />
+            </a-col>
+            <a-col :span="6">
               <a-statistic title="防幻觉拒答得分 (Reject)" :value="reportData.ragReject || 0" suffix="分" />
             </a-col>
           </a-row>
@@ -304,15 +316,27 @@
 
         <a-card title="Agent 工具调用评测维度" size="small" style="margin-bottom: 16px">
           <a-row :gutter="16">
-            <a-col :span="8">
+            <a-col :span="6">
               <a-statistic title="工具选择正确率" :value="reportData.agentToolSelection || 0" suffix="分" />
             </a-col>
-            <a-col :span="8">
+            <a-col :span="6">
               <a-statistic title="参数提取准确率" :value="reportData.agentParamAccuracy || 0" suffix="分" />
             </a-col>
-            <a-col :span="8">
+            <a-col :span="6">
+              <a-statistic title="二次确认正确率" :value="reportData.agentConfirmation || 0" suffix="分" />
+            </a-col>
+            <a-col :span="6">
               <a-statistic title="任务最终完成度" :value="reportData.agentTaskCompletion || 0" suffix="分" />
             </a-col>
+          </a-row>
+        </a-card>
+
+        <a-card title="性能与Token消耗" size="small" style="margin-bottom: 16px">
+          <a-row :gutter="16">
+            <a-col :span="6"><a-statistic title="平均耗时" :value="reportData.avgDurationMs || 0" suffix="ms" :precision="2" /></a-col>
+            <a-col :span="6"><a-statistic title="P95耗时" :value="reportData.p95DurationMs || 0" suffix="ms" /></a-col>
+            <a-col :span="6"><a-statistic title="输入Token" :value="reportData.totalPromptTokens || 0" /></a-col>
+            <a-col :span="6"><a-statistic title="总Token" :value="reportData.totalTokens || 0" /></a-col>
           </a-row>
         </a-card>
 
@@ -457,6 +481,9 @@
               </a-form-item>
             </a-col>
           </a-row>
+          <a-form-item label="预期召回片段关键词JSON" name="expectedChunkKeywords">
+            <a-textarea v-model:value="datasetForm.expectedChunkKeywords" :rows="3" placeholder='["片段关键词1","片段关键词2"]' />
+          </a-form-item>
           <a-form-item label="预期答案要点" name="expectedAnswer">
             <a-textarea v-model:value="datasetForm.expectedAnswer" :rows="3" placeholder="人工标准答案或关键要点" />
           </a-form-item>
@@ -489,6 +516,9 @@
           </a-row>
           <a-form-item label="预期工具参数JSON" name="expectedToolParams">
             <a-textarea v-model:value="datasetForm.expectedToolParams" :rows="5" placeholder='{"orderCode":"B100"}' />
+          </a-form-item>
+          <a-form-item label="是否必须二次确认" name="shouldRequireConfirm">
+            <a-switch v-model:checked="shouldRequireConfirmChecked" checked-children="必须确认" un-checked-children="无需确认" />
           </a-form-item>
         </template>
 
@@ -567,10 +597,12 @@ interface EvalDataset {
   expectedAnswer?: string;
   expectedKeywords?: string;
   expectedReferences?: string;
+  expectedChunkKeywords?: string;
   expectedReject?: number;
   expectedToolName?: string;
   expectedToolParams?: string;
   expectedTaskResult?: string;
+  shouldRequireConfirm?: number;
   difficulty?: string;
   weight?: number;
   status?: number;
@@ -595,10 +627,12 @@ interface EvalResult {
   rawResponse?: string;
   answerRelevanceScore?: number;
   referenceHitScore?: number;
+  chunkHitScore?: number;
   rejectScore?: number;
   toolSelectionScore?: number;
   paramAccuracyScore?: number;
   taskCompletionScore?: number;
+  confirmationScore?: number;
   totalScore?: number;
   passed?: number;
   durationMs?: number;
@@ -617,10 +651,17 @@ interface EvalReport {
   avgScore: number;
   ragAnswerRelevance: number;
   ragReferenceHit: number;
+  ragChunkHit: number;
   ragReject: number;
   agentToolSelection: number;
   agentParamAccuracy: number;
   agentTaskCompletion: number;
+  agentConfirmation: number;
+  avgDurationMs: number;
+  p95DurationMs: number;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  totalTokens: number;
 }
 
 interface EvalRunTask {
@@ -683,7 +724,8 @@ const runStarting = ref(false);
 const runForm = reactive({
   runName: '',
   evalType: '',
-  modelName: '',
+  promptCode: '',
+  promptVersion: undefined as number | undefined,
   asyncMode: true,
 });
 
@@ -707,6 +749,13 @@ const expectedRejectChecked = computed({
   get: () => datasetForm.expectedReject === 1,
   set: (value: boolean) => {
     datasetForm.expectedReject = value ? 1 : 0;
+  },
+});
+
+const shouldRequireConfirmChecked = computed({
+  get: () => datasetForm.shouldRequireConfirm === 1,
+  set: (value: boolean) => {
+    datasetForm.shouldRequireConfirm = value ? 1 : 0;
   },
 });
 
@@ -773,10 +822,12 @@ function defaultDatasetForm(): EvalDataset {
     expectedAnswer: '',
     expectedKeywords: '',
     expectedReferences: '',
+    expectedChunkKeywords: '',
     expectedReject: 0,
     expectedToolName: '',
     expectedToolParams: '',
     expectedTaskResult: '',
+    shouldRequireConfirm: 0,
     difficulty: 'normal',
     weight: 1,
     status: 1,
@@ -907,7 +958,8 @@ async function submitDataset() {
 function handleOpenRunModal() {
   runForm.runName = 'AI评测-' + new Date().toISOString().slice(0, 10);
   runForm.evalType = '';
-  runForm.modelName = '';
+  runForm.promptCode = '';
+  runForm.promptVersion = undefined;
   runForm.asyncMode = true;
   runModalOpen.value = true;
 }
@@ -923,7 +975,8 @@ async function submitRun() {
         params: {
           runName: runForm.runName,
           evalType: runForm.evalType || undefined,
-          modelName: runForm.modelName || undefined,
+          promptCode: runForm.promptCode || undefined,
+          promptVersion: runForm.promptVersion,
         },
       });
       runModalOpen.value = false;
@@ -939,7 +992,8 @@ async function submitRun() {
         params: {
           runName: runForm.runName,
           evalType: runForm.evalType || undefined,
-          modelName: runForm.modelName || undefined,
+          promptCode: runForm.promptCode || undefined,
+          promptVersion: runForm.promptVersion,
         },
       });
       reportData.value = report;

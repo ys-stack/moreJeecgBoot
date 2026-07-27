@@ -120,12 +120,13 @@
                       <a-button
                         type="primary"
                         size="small"
-                        :loading="confirmLoading[tc.toolCode]"
-                        @click="handleConfirmTool(msg, tc.toolCode)"
+                        :loading="confirmLoading[tc.pendingToolCallId || tc.toolCode]"
+                        @click="handleConfirmTool(msg, tc)"
                       >
                         <template #icon><CheckOutlined /></template>
                         确认执行
                       </a-button>
+                      <a-button size="small" @click="handleCancelTool(msg, tc)">取消</a-button>
                     </div>
                   </div>
                 </div>
@@ -192,11 +193,12 @@ import {
 // ==================== 类型 ====================
 
 interface ToolCallDetail {
+  pendingToolCallId?: string;
   toolCode: string;
   toolName: string;
   inputParams: string;
   outputResult: string;
-  status: 'success' | 'error' | 'pending_confirm' | 'running';
+  status: 'success' | 'error' | 'pending_confirm' | 'running' | 'cancelled';
   durationMs: number;
   _expanded?: boolean;
 }
@@ -211,7 +213,6 @@ interface ChatMessage {
   needsConfirm?: boolean;
   toolCalls?: ToolCallDetail[];
   thinking?: string;
-  _confirmTools?: string[];
 }
 
 interface Session {
@@ -332,7 +333,7 @@ function scrollToBottom() {
 
 // ==================== SSE 流式发送 ====================
 
-async function doSend(message: string, confirmTools: string[] = []) {
+async function doSend(message: string) {
   const s = ensureSession();
 
   // 用户消息
@@ -350,7 +351,6 @@ async function doSend(message: string, confirmTools: string[] = []) {
 
   try {
     const body: any = { message, sessionId: s.backendId || '' };
-    if (confirmTools.length > 0) body.confirmTools = confirmTools;
 
     const response = await fetch('/jeecgboot/practice/tool/chat/stream', {
       method: 'POST',
@@ -413,6 +413,7 @@ async function doSend(message: string, confirmTools: string[] = []) {
             const data = JSON.parse(eventData);
             if (!msg.toolCalls) msg.toolCalls = [];
             msg.toolCalls.push({
+              pendingToolCallId: data.pendingToolCallId,
               toolCode: data.toolCode,
               toolName: data.toolName,
               inputParams: data.inputParams,
@@ -518,40 +519,35 @@ function handleKeyDown(e: KeyboardEvent) {
 
 // ==================== 确认执行 ====================
 
-async function handleConfirmTool(msg: ChatMessage, toolCode: string) {
-  confirmLoading[toolCode] = true;
+async function handleConfirmTool(msg: ChatMessage, toolCall: ToolCallDetail) {
+  const pendingId = toolCall.pendingToolCallId;
+  if (!pendingId) {
+    antMessage.error('确认单 ID 缺失，请重新发起请求');
+    return;
+  }
+  confirmLoading[pendingId] = true;
   try {
-    const confirmed = [...(msg._confirmTools || []), toolCode];
-    const s = ensureSession();
-    const msgIdx = s.messages.indexOf(msg);
-
-    // 找原始用户消息
-    let originalMessage = '';
-    for (let i = msgIdx - 1; i >= 0; i--) {
-      if (s.messages[i].role === 'user') {
-        originalMessage = s.messages[i].content;
-        break;
-      }
-    }
-    if (!originalMessage) {
-      antMessage.error('找不到原始问题');
-      return;
-    }
-
-    // 替换当前消息为新的加载状态
-    s.messages[msgIdx] = {
-      role: 'ai', content: '', loading: true,
-      thinking: '确认执行中...', toolCalls: [],
-    };
-    scrollToBottom();
-
-    // 重新发送（SSE 流式）
-    await doSend(originalMessage, confirmed);
+    const result = await defHttp.post<string>({
+      url: `/practice/tool/confirm-execute/${pendingId}`,
+    });
+    toolCall.outputResult = typeof result === 'string' ? result : JSON.stringify(result);
+    toolCall.status = 'success';
+    msg.needsConfirm = msg.toolCalls?.some((item) => item.status === 'pending_confirm') ?? false;
+    antMessage.success('操作已执行');
   } catch (e: any) {
     antMessage.error('确认执行失败: ' + (e?.message || e));
   } finally {
-    confirmLoading[toolCode] = false;
+    confirmLoading[pendingId] = false;
   }
+}
+
+async function handleCancelTool(msg: ChatMessage, toolCall: ToolCallDetail) {
+  const pendingId = toolCall.pendingToolCallId;
+  if (!pendingId) return;
+  await defHttp.post({ url: `/practice/tool/cancel/${pendingId}` });
+  toolCall.status = 'cancelled';
+  msg.needsConfirm = msg.toolCalls?.some((item) => item.status === 'pending_confirm') ?? false;
+  antMessage.success('操作已取消');
 }
 
 // ==================== 初始化 ====================

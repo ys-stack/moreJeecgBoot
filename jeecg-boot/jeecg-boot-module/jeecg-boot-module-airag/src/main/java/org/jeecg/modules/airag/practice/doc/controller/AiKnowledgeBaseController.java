@@ -8,18 +8,24 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.jeecg.common.api.vo.Result;
+import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.common.system.base.controller.JeecgController;
 import org.jeecg.common.system.query.QueryGenerator;
 import org.jeecg.common.util.oConvertUtils;
 import org.jeecg.modules.airag.practice.doc.entity.AiKnowledgeBase;
 import org.jeecg.modules.airag.practice.cache.service.IKnowledgeCacheVersionService;
 import org.jeecg.modules.airag.practice.doc.service.IAiKnowledgeBaseService;
+import org.jeecg.modules.airag.practice.security.KnowledgeAccessService;
+import org.jeecg.modules.airag.practice.security.PracticeSecurityContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
+import java.util.List;
 
 /**
  * AI知识库管理 Controller
@@ -48,10 +54,17 @@ public class AiKnowledgeBaseController
     @Autowired
     private IKnowledgeCacheVersionService knowledgeCacheVersionService;
 
+    @Autowired
+    private PracticeSecurityContext securityContext;
+
+    @Autowired
+    private KnowledgeAccessService knowledgeAccessService;
+
     /**
      * 分页查询
      * 支持按 name（模糊）、status 过滤
      */
+    @RequiresPermissions("practice:kb:list")
     @GetMapping("/list")
     @Operation(summary = "分页查询知识库")
     public Result<IPage<AiKnowledgeBase>> list(
@@ -60,7 +73,14 @@ public class AiKnowledgeBaseController
             @RequestParam(name = "pageSize", defaultValue = "10") Integer pageSize,
             HttpServletRequest req) {
 
+        LoginUser user = securityContext.requireUser();
+        List<String> readableIds = knowledgeAccessService.readableKnowledgeBaseIds(user);
         QueryWrapper<AiKnowledgeBase> qw = QueryGenerator.initQueryWrapper(query, req.getParameterMap());
+        if (readableIds.isEmpty()) {
+            qw.eq("id", "__NO_ACCESS__");
+        } else {
+            qw.in("id", readableIds);
+        }
         qw.orderByDesc("create_time");
         Page<AiKnowledgeBase> page = new Page<>(pageNo, pageSize);
         IPage<AiKnowledgeBase> result = knowledgeBaseService.page(page, qw);
@@ -70,10 +90,17 @@ public class AiKnowledgeBaseController
     /**
      * 全量列表（不分页，用于下拉选择）
      */
+    @RequiresPermissions("practice:kb:list")
     @GetMapping("/listAll")
     @Operation(summary = "全量知识库列表（下拉选择用）")
     public Result<?> listAll() {
+        LoginUser user = securityContext.requireUser();
+        List<String> readableIds = knowledgeAccessService.readableKnowledgeBaseIds(user);
+        if (readableIds.isEmpty()) {
+            return Result.OK(Collections.emptyList());
+        }
         QueryWrapper<AiKnowledgeBase> qw = new QueryWrapper<>();
+        qw.in("id", readableIds);
         qw.eq("status", "active");
         qw.orderByDesc("create_time");
         return Result.OK(knowledgeBaseService.list(qw));
@@ -82,9 +109,11 @@ public class AiKnowledgeBaseController
     /**
      * 新增知识库
      */
+    @RequiresPermissions("practice:kb:add")
     @PostMapping("/add")
     @Operation(summary = "新增知识库")
     public Result<String> add(@RequestBody AiKnowledgeBase kb) {
+        LoginUser user = securityContext.requireUser();
         if (StringUtils.isBlank(kb.getName())) {
             return Result.error("知识库名称不能为空");
         }
@@ -92,15 +121,11 @@ public class AiKnowledgeBaseController
         if (StringUtils.isBlank(kb.getStatus())) {
             kb.setStatus("active");
         }
-        if (kb.getDocCount() == null) {
-            kb.setDocCount(0);
-        }
-        if (kb.getChunkCount() == null) {
-            kb.setChunkCount(0);
-        }
-        if (kb.getCacheVersion() == null) {
-            kb.setCacheVersion(1L);
-        }
+        kb.setId(null);
+        kb.setDocCount(0);
+        kb.setChunkCount(0);
+        kb.setCacheVersion(1L);
+        kb.setCreateBy(user.getId());
         kb.setCreateTime(new Date());
         knowledgeBaseService.save(kb);
         return Result.OK("新增成功");
@@ -109,21 +134,32 @@ public class AiKnowledgeBaseController
     /**
      * 修改知识库
      */
+    @RequiresPermissions("practice:kb:edit")
     @PutMapping("/edit")
     @Operation(summary = "修改知识库")
     public Result<String> edit(@RequestBody AiKnowledgeBase kb) {
         if (StringUtils.isBlank(kb.getId())) {
             return Result.error("ID不能为空");
         }
-        kb.setUpdateTime(new Date());
-        knowledgeBaseService.updateById(kb);
-        knowledgeCacheVersionService.bumpVersion(kb.getId());
+        LoginUser user = securityContext.requireUser();
+        AiKnowledgeBase stored = knowledgeAccessService.requireManageableKnowledgeBase(kb.getId(), user);
+        stored.setName(kb.getName());
+        stored.setDescription(kb.getDescription());
+        stored.setStatus(kb.getStatus());
+        stored.setRoleCode(kb.getRoleCode());
+        stored.setEmbedModelId(kb.getEmbedModelId());
+        stored.setMetadata(kb.getMetadata());
+        stored.setUpdateBy(user.getId());
+        stored.setUpdateTime(new Date());
+        knowledgeBaseService.updateById(stored);
+        knowledgeCacheVersionService.bumpVersion(stored.getId());
         return Result.OK("修改成功");
     }
 
     /**
      * 删除知识库（级联删除文档和分片）
      */
+    @RequiresPermissions("practice:kb:delete")
     @DeleteMapping("/delete")
     @Operation(summary = "删除知识库（级联删除文档和分片）")
     public Result<String> delete(@RequestParam String ids) {
@@ -131,7 +167,9 @@ public class AiKnowledgeBaseController
             return Result.error("ID不能为空");
         }
         int totalDocs = 0;
+        LoginUser user = securityContext.requireUser();
         for (String id : Arrays.asList(ids.split(","))) {
+            knowledgeAccessService.requireManageableKnowledgeBase(id, user);
             totalDocs += knowledgeBaseService.deleteWithDocuments(id);
         }
         return Result.OK("已删除知识库及其下 " + totalDocs + " 个文档");
@@ -140,13 +178,12 @@ public class AiKnowledgeBaseController
     /**
      * 按ID查询知识库
      */
+    @RequiresPermissions("practice:kb:list")
     @GetMapping("/queryById")
     @Operation(summary = "按ID查询知识库")
     public Result<AiKnowledgeBase> queryById(@RequestParam String id) {
-        AiKnowledgeBase kb = knowledgeBaseService.getById(id);
-        if (kb == null) {
-            return Result.error("知识库不存在");
-        }
+        LoginUser user = securityContext.requireUser();
+        AiKnowledgeBase kb = knowledgeAccessService.requireReadableKnowledgeBase(id, user);
         return Result.OK(kb);
     }
 }

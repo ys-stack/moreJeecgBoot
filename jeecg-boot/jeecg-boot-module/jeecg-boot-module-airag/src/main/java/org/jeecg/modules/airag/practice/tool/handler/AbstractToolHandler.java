@@ -28,7 +28,7 @@ public abstract class AbstractToolHandler implements ToolHandler{
     private static final ThreadLocal<ToolContext> CONTEXT_HOLDER = new ThreadLocal<>();
 
     @Override
-    public String execute(String argumentsJson) {
+    public final String execute(String argumentsJson) {
         // ① 解析参数
         JSONObject args;
         try {
@@ -48,9 +48,24 @@ public abstract class AbstractToolHandler implements ToolHandler{
             return execute(args);
         }catch (Exception e){
             log.error("[{}] 执行异常", getToolCode(), e);
-            return errorResult("工具执行异常：" + e.getMessage());
+            return errorResult("工具执行失败");
         }
     }
+
+    @Override
+    public final List<String> validateArguments(String argumentsJson) {
+        try {
+            JSONObject args = JSON.parseObject(argumentsJson);
+            if (args == null) {
+                return List.of("参数必须是 JSON 对象");
+            }
+            List<String> errors = validate(args);
+            return errors == null ? List.of() : List.copyOf(errors);
+        } catch (Exception e) {
+            return List.of("参数格式错误，期望 JSON 对象");
+        }
+    }
+
     /**
      * 参数校验 —— 子类实现
      * 返回空列表表示通过，非空列表表示有错误
@@ -106,10 +121,10 @@ public abstract class AbstractToolHandler implements ToolHandler{
     protected boolean isCurrentUserAdmin() {
         LoginUser user = getCurrentUser();
         if (user == null) return false;
-        // 方式1：看用户名
-        if ("admin".equals(user.getUsername())) return true;
-        // 方式2：看角色字符串里有没有 admin
         String roles = user.getRoleCode();
-        return roles != null && roles.contains("admin");
+        if (roles == null || roles.isBlank()) return false;
+        return java.util.Arrays.stream(roles.split(","))
+                .map(String::trim)
+                .anyMatch("admin"::equals);
     }
 }

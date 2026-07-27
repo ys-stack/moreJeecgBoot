@@ -4,7 +4,9 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 import jakarta.annotation.Resource;
+import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.jeecg.common.api.vo.Result;
+import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocument;
 import org.jeecg.modules.airag.practice.doc.entity.AiDocumentChunk;
 import org.jeecg.modules.airag.practice.doc.entity.AiKnowledgeBase;
@@ -15,6 +17,8 @@ import org.jeecg.modules.airag.practice.doc.service.IAiKnowledgeBaseService;
 import org.jeecg.modules.airag.practice.vector.service.VectorStoreService;
 import org.jeecg.modules.airag.practice.vector.vo.VectorSearchRequestVO;
 import org.jeecg.modules.airag.practice.vector.vo.VectorSearchResultVO;
+import org.jeecg.modules.airag.practice.security.KnowledgeAccessService;
+import org.jeecg.modules.airag.practice.security.PracticeSecurityContext;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -54,14 +58,23 @@ public class VectorSearchController {
     @Resource
     private IKnowledgeCacheVersionService knowledgeCacheVersionService;
 
+    @Resource
+    private PracticeSecurityContext securityContext;
+
+    @Resource
+    private KnowledgeAccessService knowledgeAccessService;
+
     /**
      * 对指定文档的分片做向量化并写入 ES
      *
      * 流程：查 MySQL 拿 chunks → 批量 Embedding → bulk 写入 ES
      */
+    @RequiresPermissions("practice:doc:vectorize")
     @PostMapping("/vectorize/{documentId}")
     @Operation(summary = "文档分片向量化并写入ES")
     public Result<Integer> vectorize(@PathVariable String documentId) {
+        LoginUser user = securityContext.requireUser();
+        knowledgeAccessService.requireManageableDocument(documentId, user);
         try {
             // 1. 查文档信息（获取 knowledgeBaseId）
             AiDocument doc = aiDocumentMapper.selectById(documentId);
@@ -106,6 +119,7 @@ public class VectorSearchController {
      *
      * 流程：query Embedding → ES kNN 搜索 → 返回 topK chunk
      */
+    @RequiresPermissions("practice:vector:search")
     @PostMapping("/search")
     @Operation(summary = "向量语义检索")
     public Result<List<VectorSearchResultVO>> search(@RequestBody VectorSearchRequestVO request) {
@@ -115,6 +129,8 @@ public class VectorSearchController {
         if (request.getKnowledgeBaseId() == null || request.getKnowledgeBaseId().isBlank()) {
             return Result.error("直接向量检索必须指定 knowledgeBaseId");
         }
+        LoginUser user = securityContext.requireUser();
+        knowledgeAccessService.requireReadableKnowledgeBase(request.getKnowledgeBaseId(), user);
         try {
             AiKnowledgeBase knowledgeBase = knowledgeBaseService.getById(request.getKnowledgeBaseId());
             if (knowledgeBase == null) {
@@ -135,9 +151,12 @@ public class VectorSearchController {
     /**
      * 删除某文档的向量数据
      */
+    @RequiresPermissions("practice:doc:vectorize")
     @DeleteMapping("/{documentId}")
     @Operation(summary = "删除文档向量数据")
     public Result<Long> deleteVectors(@PathVariable String documentId) {
+        LoginUser user = securityContext.requireUser();
+        knowledgeAccessService.requireManageableDocument(documentId, user);
         try {
             AiDocument doc = aiDocumentMapper.selectById(documentId);
             long deleted = vectorStoreService.deleteByDocumentId(documentId);
@@ -155,9 +174,12 @@ public class VectorSearchController {
     /**
      * 查看某文档在 ES 中的向量状态
      */
+    @RequiresPermissions("practice:doc:list")
     @GetMapping("/status/{documentId}")
     @Operation(summary = "查看文档向量状态")
     public Result<Long> vectorStatus(@PathVariable String documentId) {
+        LoginUser user = securityContext.requireUser();
+        knowledgeAccessService.requireReadableDocument(documentId, user);
         long count = vectorStoreService.countByDocumentId(documentId);
         return Result.OK("ES 中该文档有 " + count + " 条向量", count);
     }

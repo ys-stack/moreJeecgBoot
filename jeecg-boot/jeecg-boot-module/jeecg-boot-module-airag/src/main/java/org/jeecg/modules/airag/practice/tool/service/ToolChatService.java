@@ -24,6 +24,7 @@ import org.jeecg.modules.airag.practice.tool.cons.ToolCons;
 import org.jeecg.modules.airag.practice.tool.controller.ToolChatController;
 import org.jeecg.modules.airag.practice.tool.handler.ToolHandler;
 import org.jeecg.modules.airag.practice.tool.entity.AiToolDefinition;
+import org.jeecg.modules.airag.practice.tool.entity.AiPendingToolCall;
 import org.jeecg.modules.airag.practice.tool.vo.ToolChatResponse;
 import org.jeecg.modules.airag.practice.tool.vo.ToolChatResponse.ToolCallDetail;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -53,6 +54,8 @@ public class ToolChatService {
 
     @Resource
     private ToolCallingService toolCallingService;
+    @Resource
+    private PendingToolCallService pendingToolCallService;
     @Resource
     private AiChatMessageMapper aiChatMessageMapper;
     @Resource
@@ -124,9 +127,6 @@ public class ToolChatService {
         String sessionId = request.getSessionId();
         String messageId = UUID.randomUUID().toString();
 
-        if (request.getConfirmTools() == null) {
-            request.setConfirmTools(Collections.emptyList());
-        }
         //获取会话session
         //会话管理
         AiChatSession session;
@@ -311,10 +311,23 @@ public class ToolChatService {
 
                     if (handler != null && def != null) {
                         // 写操作二次确认
-                        if (def.getRequireConfirm() == 1 && !request.getConfirmTools().contains(toolName)) {
+                        if (Integer.valueOf(1).equals(def.getRequireConfirm())) {
+                            AiPendingToolCall pending = pendingToolCallService.create(
+                                    def, argsJson, sessionId, messageId, currentUser);
                             sendSse(writer, "confirm", JSON.toJSONString(Map.of(
-                                    "toolCode", toolName, "toolName", def.getToolName(), "inputParams", argsJson)));
+                                    "pendingToolCallId", pending.getId(),
+                                    "toolCode", toolName,
+                                    "toolName", def.getToolName(),
+                                    "inputParams", pending.getArgumentsJson(),
+                                    "expiresAt", pending.getExpiresAt())));
                             writer.flush();
+                            allToolCallDetails.add(ToolCallDetail.builder()
+                                    .pendingToolCallId(pending.getId())
+                                    .toolCode(toolName)
+                                    .toolName(def.getToolName())
+                                    .inputParams(pending.getArgumentsJson())
+                                    .status(ToolCons.status_pending_confirm)
+                                    .build());
                             needConfirm = true;
                             continue;
                         }
@@ -326,21 +339,21 @@ public class ToolChatService {
 
                         // 执行
                         long toolStart = System.currentTimeMillis();
-                        String result = toolCallingService.executeTool(
-                                toolName, handler, def, argsJson, sessionId, messageId, currentUser);
+                        String result = toolCallingService.executeToolByCode(
+                                toolName, argsJson, sessionId, messageId, currentUser, null);
                         long toolDuration = System.currentTimeMillis() - toolStart;
 
                         sendSse(writer, "tool_result", JSON.toJSONString(Map.of(
                                 "toolCode", toolName, "toolName", def.getToolName(),
                                 "outputResult", result,
-                                "status", result.contains("\"error\"") ? "error" : "success",
+                                "status", toolCallingService.isErrorResult(result) ? "error" : "success",
                                 "durationMs", toolDuration)));
                         writer.flush();
                         // 执行成功后，收集工具调用详情
                         allToolCallDetails.add(ToolCallDetail.builder()
                                 .toolCode(toolName).toolName(def.getToolName())
                                 .inputParams(argsJson).outputResult(result)
-                                .status(result.contains("\"error\"") ? "error" : "success")
+                                .status(toolCallingService.isErrorResult(result) ? "error" : "success")
                                 .durationMs(toolDuration).build());
 
                         messages.add(ToolExecutionResultMessage.from(toolRequest, result));
@@ -456,6 +469,58 @@ public class ToolChatService {
     }
 
     /**
+     * 评测专用工具规划：只让模型选择工具和生成参数，不创建会话、不执行 Handler。
+     */
+    public ToolChatResponse evaluateToolPlan(String message, LoginUser user, String systemPrompt) {
+        if (user == null) {
+            throw new IllegalArgumentException("评测用户不能为空");
+        }
+        long startTime = System.currentTimeMillis();
+        ToolCallingService.ToolBundle bundle = toolCallingService.buildToolMap(user);
+        List<ChatMessage> messages = new ArrayList<>();
+        if (StringUtils.isNotBlank(systemPrompt)) {
+            messages.add(new SystemMessage(systemPrompt));
+        }
+        messages.add(new UserMessage(message));
+
+        ChatRequest chatRequest = ChatRequest.builder()
+                .messages(messages)
+                .toolSpecifications(bundle.getSpecifications())
+                .build();
+        ChatResponse response = chatModel.chat(chatRequest);
+        AiMessage aiMessage = response.aiMessage();
+        List<ToolCallDetail> calls = new ArrayList<>();
+        boolean needsConfirm = false;
+
+        if (aiMessage.hasToolExecutionRequests()) {
+            for (ToolExecutionRequest toolRequest : aiMessage.toolExecutionRequests()) {
+                AiToolDefinition definition = bundle.getDefMap().get(toolRequest.name());
+                boolean requireConfirm = definition != null && definition.getRequireConfirm() == 1;
+                needsConfirm |= requireConfirm;
+                calls.add(ToolCallDetail.builder()
+                        .toolCode(toolRequest.name())
+                        .toolName(definition == null ? toolRequest.name() : definition.getToolName())
+                        .inputParams(toolRequest.arguments())
+                        .status(requireConfirm ? ToolCons.status_pending_confirm : "dry_run")
+                        .build());
+            }
+        }
+
+        Integer promptTokens = response.tokenUsage() == null ? null : response.tokenUsage().inputTokenCount();
+        Integer completionTokens = response.tokenUsage() == null ? null : response.tokenUsage().outputTokenCount();
+        return ToolChatResponse.builder()
+                .content(aiMessage.text())
+                .model(modelName)
+                .costMs(System.currentTimeMillis() - startTime)
+                .rounds(1)
+                .toolCalls(calls)
+                .needsConfirm(needsConfirm)
+                .promptTokens(promptTokens)
+                .completionTokens(completionTokens)
+                .build();
+    }
+
+    /**
      * 重载方法：支持显式指定执行用户（用于 AI 评测或后台异步引擎）
      */
     public ToolChatResponse chatWithTools(ToolChatController.ToolChatRequest request, LoginUser sysUser) {
@@ -466,16 +531,6 @@ public class ToolChatService {
         String finalContent = null;
         String toolCallsJson = null;
 
-        if (request.getConfirmTools() == null) {
-            request.setConfirmTools(Collections.emptyList());
-        }
-        if (sysUser == null) {
-            sysUser = new LoginUser();
-            sysUser.setId("admin");
-            sysUser.setUsername("admin");
-            sysUser.setRealname("管理员");
-            sysUser.setRoleCode("admin");
-        }
         //会话管理
         AiChatSession session;
         if (StringUtils.isBlank(sessionId)) {
@@ -501,7 +556,7 @@ public class ToolChatService {
                 .setCreateTime(new Date());
         aiChatMessageMapper.insert(userMsg);
 
-        ToolCallingService.ToolBundle bundle = toolCallingService.buildToolMap();
+        ToolCallingService.ToolBundle bundle = toolCallingService.buildToolMap(sysUser);
         if (bundle.isEmpty()) {
             return fallbackChat(userMessage, startTime);
         }
@@ -543,6 +598,8 @@ public class ToolChatService {
         List<ToolCallDetail> allToolCallDetails = new ArrayList<>();
         int rounds = 0;
         boolean needConfirm = false;
+        int promptTokens = 0;
+        int completionTokens = 0;
 
         for (int round = 1; round <= MAX_ROUNDS; round++) {
             rounds = round;
@@ -553,6 +610,10 @@ public class ToolChatService {
                     .build();
 
             ChatResponse response = chatModel.chat(chatRequest);
+            if (response.tokenUsage() != null) {
+                promptTokens += response.tokenUsage().inputTokenCount();
+                completionTokens += response.tokenUsage().outputTokenCount();
+            }
             AiMessage aiMessage = response.aiMessage();
 
             //无需调用工具给出最终回复
@@ -575,20 +636,25 @@ public class ToolChatService {
                 long toolStart = System.currentTimeMillis();
 
                 if (handler != null && def != null) {
-                    if (def.getRequireConfirm() == 1 && !request.getConfirmTools().contains(toolName)) {
+                    if (Integer.valueOf(1).equals(def.getRequireConfirm())) {
+                        AiPendingToolCall pending = pendingToolCallService.create(
+                                def, argsJson, sessionId, messageId, sysUser);
                         detail = ToolCallDetail.builder()
+                                .pendingToolCallId(pending.getId())
                                 .toolCode(toolName).toolName(def.getToolName())
-                                .inputParams(argsJson).status(ToolCons.status_pending_confirm).build();
+                                .inputParams(pending.getArgumentsJson())
+                                .status(ToolCons.status_pending_confirm).build();
                         allToolCallDetails.add(detail);
                         needConfirm = true;
                         continue;
                     }
-                    result = toolCallingService.executeTool(toolName, handler, def, argsJson, sessionId, messageId, sysUser);
+                    result = toolCallingService.executeToolByCode(
+                            toolName, argsJson, sessionId, messageId, sysUser, null);
                     long toolDuration = System.currentTimeMillis() - toolStart;
                     detail = ToolCallDetail.builder()
                             .toolCode(toolName).toolName(def.getToolName())
                             .inputParams(argsJson).outputResult(result)
-                            .status(result.contains("\"error\"") ? "error" : "success")
+                            .status(toolCallingService.isErrorResult(result) ? "error" : "success")
                             .durationMs(toolDuration).build();
                 } else {
                     result = "{\"error\": \"工具 " + toolName + " 未找到或已停用\"}";
@@ -642,6 +708,8 @@ public class ToolChatService {
                 .costMs(System.currentTimeMillis() - startTime)
                 .rounds(rounds)
                 .needsConfirm(needConfirm)
+                .promptTokens(promptTokens)
+                .completionTokens(completionTokens)
                 .build();
     }
 

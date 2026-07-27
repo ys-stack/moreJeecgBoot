@@ -78,6 +78,9 @@ public class AiEvalResult implements Serializable {
     @Schema(description = "用户输入问题快照")
     private String question;
 
+    /** 执行时的用例权重快照，避免用例调整导致历史报告漂移 */
+    private BigDecimal caseWeight;
+
     /** 模型实际回答：模型在评测时返回的最终文本解答 */
     @Schema(description = "模型实际回答文本")
     private String actualAnswer;
@@ -102,6 +105,9 @@ public class AiEvalResult implements Serializable {
     @Schema(description = "RAG引用命中得分(0-100)")
     private BigDecimal referenceHitScore;
 
+    /** RAG召回片段关键词命中得分 */
+    private BigDecimal chunkHitScore;
+
     /** [RAG专用] 防幻觉拒答得分：0.00 ~ 100.00，衡量知识库无答案/敏感词时是否正确拒答 */
     @Schema(description = "RAG拒答得分(0-100)")
     private BigDecimal rejectScore;
@@ -117,6 +123,9 @@ public class AiEvalResult implements Serializable {
     /** [Agent专用] 任务完成得分：0.00 ~ 100.00，衡量工具执行后最终回复是否达成诉求 */
     @Schema(description = "Agent任务完成得分(0-100)")
     private BigDecimal taskCompletionScore;
+
+    /** Agent是否正确触发或避免二次确认 */
+    private BigDecimal confirmationScore;
 
     /** 本条用例综合得分：0.00 ~ 100.00，由各子项指标按比例加权计算得出 */
     @Excel(name = "综合得分", width = 12)

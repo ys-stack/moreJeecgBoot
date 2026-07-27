@@ -5,7 +5,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.Resource;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.shiro.SecurityUtils;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.modules.airag.practice.chat.entity.AiChatMessage;
@@ -16,6 +15,7 @@ import org.jeecg.modules.airag.practice.chat.service.RagChatService;
 import org.jeecg.modules.airag.practice.chat.vo.RagChatRequest;
 import org.jeecg.modules.airag.practice.chat.vo.RagChatResponse;
 import org.jeecg.modules.airag.practice.doc.entity.AiKnowledgeBase;
+import org.jeecg.modules.airag.practice.security.PracticeSecurityContext;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -49,6 +49,8 @@ public class RagChatController {
     private RagChatService ragChatService;
     @Resource
     private ConversationMemoryService conversationMemoryService;
+    @Resource
+    private PracticeSecurityContext securityContext;
 
     /**
      * RAG 聊天 - 核心接口
@@ -70,14 +72,8 @@ public class RagChatController {
         if (request.getQuery() == null || request.getQuery().isBlank()) {
             return Result.error("query 不能为空");
         }
-        try {
-            String userId = getLoginUserId();
-            RagChatResponse response = ragChatService.ragChat(request, userId);
-            return Result.OK(response);
-        } catch (Exception e) {
-            log.error("RAG 聊天失败: {}", e.getMessage(), e);
-            return Result.error("RAG 聊天失败: " + e.getMessage());
-        }
+        LoginUser user = securityContext.requireUser();
+        return Result.OK(ragChatService.ragChat(request, user));
     }
 
     /**
@@ -102,8 +98,7 @@ public class RagChatController {
             } catch (Exception ignored) {}
             return emitter;
         }
-        String userId = getLoginUserId();
-        return ragChatService.ragChatStream(request, userId);
+        return ragChatService.ragChatStream(request, securityContext.requireUser());
     }
 
     /**
@@ -113,7 +108,7 @@ public class RagChatController {
     @GetMapping("/sessions")
     @Operation(summary = "查询会话列表")
     public Result<List<AiChatSession>> listSessions() {
-        String userId = getLoginUserId();
+        String userId = securityContext.requireUser().getId();
         List<AiChatSession> sessions = ragChatService.listSessions(userId);
         return Result.OK(sessions);
     }
@@ -125,7 +120,7 @@ public class RagChatController {
     @GetMapping("/messages/{sessionId}")
     @Operation(summary = "查询会话消息历史")
     public Result<List<AiChatMessage>> listMessages(@PathVariable String sessionId) {
-        String userId = getLoginUserId();
+        String userId = securityContext.requireUser().getId();
         List<AiChatMessage> messages = ragChatService.listMessages(sessionId,userId);
         return Result.OK(messages);
     }
@@ -137,18 +132,10 @@ public class RagChatController {
     @GetMapping("/knowledge-bases")
     @Operation(summary = "查询可访问的知识库")
     public Result<List<AiKnowledgeBase>> listAccessibleKnowledgeBases() {
-        List<AiKnowledgeBase> kbs = ragChatService.listAccessibleKnowledgeBases();
+        List<AiKnowledgeBase> kbs = ragChatService.listAccessibleKnowledgeBases(securityContext.requireUser());
         return Result.OK(kbs);
     }
 
-    /**
-     * 从 Shiro 获取当前登录用户ID
-     * 因为不使用 @IgnoreAuth，JwtFilter 已完成鉴权，此处一定能拿到用户
-     */
-    private String getLoginUserId() {
-        LoginUser sysUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
-        return sysUser.getId();
-    }
 
     /**
      * 生成会话结束总结（用户手动触发）
@@ -160,13 +147,8 @@ public class RagChatController {
     @PostMapping("/sessions/{sessionId}/summary")
     @Operation(summary = "生成会话结束总结")
     public Result<String> generateSessionSummary(@PathVariable String sessionId) {
-        try {
-            String summary = conversationMemoryService.generateSessionEndSummary(sessionId);
-            return Result.OK(summary);
-        } catch (Exception e) {
-            log.error("生成会话总结失败: {}", e.getMessage(), e);
-            return Result.error("生成总结失败: " + e.getMessage());
-        }
+        LoginUser user = securityContext.requireUser();
+        return Result.OK(conversationMemoryService.generateSessionEndSummary(sessionId, user.getId()));
     }
 
     /**
@@ -190,20 +172,15 @@ public class RagChatController {
         if (caseRequest.getCaseName() == null || caseRequest.getCaseName().isBlank()) {
             return Result.error("用例名称不能为空");
         }
-        try {
-            String userId = getLoginUserId();
-            AiToolChatCase chatCase = conversationMemoryService.saveAsCase(
-                    sessionId,
-                    caseRequest.getCaseName(),
-                    caseRequest.getScenario(),
-                    caseRequest.getDescription(),
-                    caseRequest.getExpectedTools(),
-                    userId);
-            return Result.OK(chatCase);
-        } catch (Exception e) {
-            log.error("保存用例失败: {}", e.getMessage(), e);
-            return Result.error("保存用例失败: " + e.getMessage());
-        }
+        String userId = securityContext.requireUser().getId();
+        AiToolChatCase chatCase = conversationMemoryService.saveAsCase(
+                sessionId,
+                caseRequest.getCaseName(),
+                caseRequest.getScenario(),
+                caseRequest.getDescription(),
+                caseRequest.getExpectedTools(),
+                userId);
+        return Result.OK(chatCase);
     }
 
     /**
@@ -214,7 +191,9 @@ public class RagChatController {
     @Operation(summary = "查询测试用例列表")
     public Result<List<AiToolChatCase>> listCases(
             @RequestParam(required = false) String scenario) {
-        List<AiToolChatCase> cases = conversationMemoryService.listCases(scenario);
+        LoginUser user = securityContext.requireUser();
+        List<AiToolChatCase> cases = conversationMemoryService.listCases(
+                scenario, user.getId(), securityContext.isAdmin(user));
         return Result.OK(cases);
     }
 

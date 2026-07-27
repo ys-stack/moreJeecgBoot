@@ -1,5 +1,6 @@
 package org.jeecg.modules.airag.practice.eval.controller;
 
+import com.alibaba.fastjson.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -8,15 +9,19 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.shiro.SecurityUtils;
+import org.apache.shiro.authc.AuthenticationException;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.common.aspect.annotation.AutoLog;
 import org.jeecg.common.system.query.QueryGenerator;
 import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.modules.airag.practice.eval.entity.AiEvalDataset;
 import org.jeecg.modules.airag.practice.eval.entity.AiEvalResult;
+import org.jeecg.modules.airag.practice.eval.entity.AiEvalRun;
 import org.jeecg.modules.airag.practice.eval.service.IAiEvalDatasetService;
 import org.jeecg.modules.airag.practice.eval.service.IAiEvalResultService;
+import org.jeecg.modules.airag.practice.eval.service.IAiEvalRunService;
 import org.jeecg.modules.airag.practice.eval.service.IAiEvalRunnerService;
 import org.jeecg.modules.airag.practice.eval.vo.AiEvalReportVO;
 import org.jeecg.modules.airag.practice.eval.vo.AiEvalRunRequest;
@@ -49,6 +54,9 @@ public class AiEvalController {
 
     @Resource
     private IAiEvalRunnerService evalRunnerService;
+
+    @Resource
+    private IAiEvalRunService evalRunService;
 
     // ==================== Dataset CRUD ====================
 
@@ -113,6 +121,8 @@ public class AiEvalController {
     @Operation(summary = "添加AI评测用例")
     @PostMapping("/dataset/add")
     public Result<?> addDataset(@RequestBody AiEvalDataset dataset) {
+        requireAdmin(getLoginUser());
+        validateDataset(dataset);
         fillDatasetDefaults(dataset, true);
         evalDatasetService.save(dataset);
         return Result.ok("添加成功！");
@@ -125,6 +135,8 @@ public class AiEvalController {
     @Operation(summary = "编辑AI评测用例")
     @RequestMapping(value = "/dataset/edit", method = {RequestMethod.PUT, RequestMethod.POST})
     public Result<?> editDataset(@RequestBody AiEvalDataset dataset) {
+        requireAdmin(getLoginUser());
+        validateDataset(dataset);
         fillDatasetDefaults(dataset, false);
         evalDatasetService.updateById(dataset);
         return Result.ok("修改成功！");
@@ -137,6 +149,7 @@ public class AiEvalController {
     @Operation(summary = "删除AI评测用例")
     @DeleteMapping("/dataset/delete")
     public Result<?> deleteDataset(@RequestParam(name = "id") String id) {
+        requireAdmin(getLoginUser());
         evalDatasetService.removeById(id);
         return Result.ok("删除成功！");
     }
@@ -148,6 +161,7 @@ public class AiEvalController {
     @Operation(summary = "批量删除AI评测用例")
     @DeleteMapping("/dataset/deleteBatch")
     public Result<?> deleteBatchDataset(@RequestParam(name = "ids") String ids) {
+        requireAdmin(getLoginUser());
         evalDatasetService.removeByIds(Arrays.asList(ids.split(",")));
         return Result.ok("批量删除成功！");
     }
@@ -164,7 +178,10 @@ public class AiEvalController {
                                                   @RequestParam(name = "pageNo", defaultValue = "1") Integer pageNo,
                                                   @RequestParam(name = "pageSize", defaultValue = "10") Integer pageSize,
                                                   HttpServletRequest req) {
+        LoginUser user = getLoginUser();
         QueryWrapper<AiEvalResult> queryWrapper = QueryGenerator.initQueryWrapper(query, req.getParameterMap());
+        // 普通用户只能看自己的评测；管理员可做全局运维审计。
+        queryWrapper.eq(!isAdmin(user), "create_by", user.getId());
         queryWrapper.orderByDesc("create_time");
         Page<AiEvalResult> page = new Page<>(pageNo, pageSize);
         return Result.ok(evalResultService.page(page, queryWrapper));
@@ -177,6 +194,7 @@ public class AiEvalController {
     @Operation(summary = "按runId查询AI评测结果")
     @GetMapping("/result/run/{runId}")
     public Result<List<AiEvalResult>> resultByRunId(@PathVariable String runId) {
+        requireOwnedRun(runId, getLoginUser());
         return Result.ok(evalResultService.listByRunId(runId));
     }
 
@@ -187,10 +205,12 @@ public class AiEvalController {
     @Operation(summary = "查询AI评测结果详情")
     @GetMapping("/result/queryById")
     public Result<AiEvalResult> queryResultById(@RequestParam(name = "id") String id) {
+        LoginUser user = getLoginUser();
         AiEvalResult entity = evalResultService.getById(id);
         if (entity == null) {
             return Result.error("未找到对应评测结果");
         }
+        requireOwner(entity.getCreateBy(), user);
         return Result.ok(entity);
     }
 
@@ -201,6 +221,7 @@ public class AiEvalController {
     @Operation(summary = "添加AI评测结果")
     @PostMapping("/result/add")
     public Result<?> addResult(@RequestBody AiEvalResult result) {
+        requireAdmin(getLoginUser());
         fillResultDefaults(result);
         evalResultService.save(result);
         return Result.ok("添加成功！");
@@ -213,6 +234,12 @@ public class AiEvalController {
     @Operation(summary = "删除AI评测结果")
     @DeleteMapping("/result/delete")
     public Result<?> deleteResult(@RequestParam(name = "id") String id) {
+        LoginUser user = getLoginUser();
+        AiEvalResult result = evalResultService.getById(id);
+        if (result == null) {
+            return Result.error("未找到对应评测结果");
+        }
+        requireOwner(result.getCreateBy(), user);
         evalResultService.removeById(id);
         return Result.ok("删除成功！");
     }
@@ -224,7 +251,12 @@ public class AiEvalController {
     @Operation(summary = "批量删除AI评测结果")
     @DeleteMapping("/result/deleteBatch")
     public Result<?> deleteBatchResult(@RequestParam(name = "ids") String ids) {
-        evalResultService.removeByIds(Arrays.asList(ids.split(",")));
+        LoginUser user = getLoginUser();
+        List<String> idList = Arrays.asList(ids.split(","));
+        for (AiEvalResult result : evalResultService.listByIds(idList)) {
+            requireOwner(result.getCreateBy(), user);
+        }
+        evalResultService.removeByIds(idList);
         return Result.ok("批量删除成功！");
     }
 
@@ -235,6 +267,7 @@ public class AiEvalController {
     @Operation(summary = "按runId删除AI评测结果")
     @DeleteMapping("/result/deleteByRunId")
     public Result<?> deleteResultByRunId(@RequestParam(name = "runId") String runId) {
+        requireOwnedRun(runId, getLoginUser());
         evalResultService.removeByRunId(runId);
         return Result.ok("删除成功！");
     }
@@ -243,12 +276,13 @@ public class AiEvalController {
     @PostMapping("/run")
     public Result<AiEvalReportVO> run(@RequestBody AiEvalRunRequest request) {
         LoginUser user = getLoginUser();
-        return Result.ok(evalRunnerService.run(request, user.getId()));
+        return Result.ok(evalRunnerService.run(request, user));
     }
 
     /** 查看评测报告 */
     @GetMapping("/report/{runId}")
     public Result<AiEvalReportVO> report(@PathVariable String runId) {
+        requireOwnedRun(runId, getLoginUser());
         return Result.ok(evalRunnerService.report(runId));
     }
 
@@ -256,6 +290,9 @@ public class AiEvalController {
     @GetMapping("/compare")
     public Result<Map<String, Object>> compare(@RequestParam String baseRunId,
                                                @RequestParam String targetRunId) {
+        LoginUser user = getLoginUser();
+        requireOwnedRun(baseRunId, user);
+        requireOwnedRun(targetRunId, user);
         return Result.ok(evalRunnerService.compare(baseRunId, targetRunId));
     }
 
@@ -271,6 +308,9 @@ public class AiEvalController {
         }
         if (dataset.getExpectedReject() == null) {
             dataset.setExpectedReject(0);
+        }
+        if (dataset.getShouldRequireConfirm() == null) {
+            dataset.setShouldRequireConfirm(0);
         }
         if (dataset.getDifficulty() == null) {
             dataset.setDifficulty("normal");
@@ -299,16 +339,17 @@ public class AiEvalController {
     @PostMapping("/run/async")
     public Result<AiEvalRunTask> runAsync(@RequestBody AiEvalRunRequest request) {
         LoginUser user = getLoginUser();
-        return Result.ok(evalRunnerService.submitRunAsync(request, user.getId()));
+        return Result.ok(evalRunnerService.submitRunAsync(request, user));
     }
     /** 轮询查询评测任务实时进度 */
     @GetMapping("/task/status/{runId}")
     public Result<AiEvalRunTask> getTaskStatus(@PathVariable String runId) {
+        requireOwnedRun(runId, getLoginUser());
         return Result.ok(evalRunnerService.getTaskStatus(runId));
     }
 
     /**
-     * 安全获取当前登录用户，如果未登录或处于无上下文线程则兜底为 admin
+     * 获取当前登录用户。安全上下文异常时必须拒绝，不能伪造admin身份继续执行。
      */
     private LoginUser getLoginUser() {
         try {
@@ -316,12 +357,83 @@ public class AiEvalController {
             if (user != null) {
                 return user;
             }
-        } catch (Exception ignored) {}
-        LoginUser admin = new LoginUser();
-        admin.setId("admin");
-        admin.setUsername("admin");
-        admin.setRealname("管理员");
-        admin.setRoleCode("admin");
-        return admin;
+        } catch (Exception e) {
+            throw new AuthenticationException("获取登录用户失败", e);
+        }
+        throw new AuthenticationException("用户未登录");
+    }
+
+    /**
+     * 黄金标注必须在写入时校验。运行时再静默降级会让错误标注得到满分，污染整份基线报告。
+     */
+    private void validateDataset(AiEvalDataset dataset) {
+        if (dataset == null || StringUtils.isAnyBlank(dataset.getCaseCode(), dataset.getCaseName(),
+                dataset.getEvalType(), dataset.getQuestion())) {
+            throw new IllegalArgumentException("用例编码、名称、类型和问题不能为空");
+        }
+        if (!List.of("rag", "agent").contains(dataset.getEvalType())) {
+            throw new IllegalArgumentException("evalType只能是rag或agent");
+        }
+        if ("rag".equals(dataset.getEvalType())) {
+            validateJson(dataset.getExpectedKeywords(), "expectedKeywords", true);
+            validateJson(dataset.getExpectedReferences(), "expectedReferences", true);
+            validateJson(dataset.getExpectedChunkKeywords(), "expectedChunkKeywords", true);
+        } else {
+            validateJson(dataset.getExpectedToolParams(), "expectedToolParams", false);
+            if (StringUtils.isNotBlank(dataset.getExpectedToolParams())
+                    && StringUtils.isBlank(dataset.getExpectedToolName())) {
+                throw new IllegalArgumentException("填写预期参数时必须指定预期工具");
+            }
+        }
+    }
+
+    private void validateJson(String value, String fieldName, boolean requireArray) {
+        if (StringUtils.isBlank(value)) {
+            return;
+        }
+        Object parsed;
+        try {
+            parsed = JSON.parse(value);
+        } catch (Exception e) {
+            throw new IllegalArgumentException(fieldName + "不是合法JSON", e);
+        }
+        if (requireArray && !(parsed instanceof List<?>)) {
+            throw new IllegalArgumentException(fieldName + "必须是JSON数组");
+        }
+        if (!requireArray && !(parsed instanceof Map<?, ?>)) {
+            throw new IllegalArgumentException(fieldName + "必须是JSON对象");
+        }
+    }
+
+    private void requireOwnedRun(String runId, LoginUser user) {
+        AiEvalRun run = evalRunService.getById(runId);
+        if (run == null) {
+            throw new IllegalArgumentException("评测运行不存在: " + runId);
+        }
+        requireOwner(run.getCreateBy(), user);
+    }
+
+    private void requireOwner(String ownerId, LoginUser user) {
+        if (!isAdmin(user) && !StringUtils.equals(ownerId, user.getId())) {
+            throw new org.apache.shiro.authz.AuthorizationException("无权访问其他用户的评测数据");
+        }
+    }
+
+    private void requireAdmin(LoginUser user) {
+        if (!isAdmin(user)) {
+            throw new org.apache.shiro.authz.AuthorizationException("只有管理员可以维护评测用例或手工结果");
+        }
+    }
+
+    private boolean isAdmin(LoginUser user) {
+        if (user == null) {
+            return false;
+        }
+        if ("admin".equalsIgnoreCase(user.getUsername())) {
+            return true;
+        }
+        return Arrays.stream(StringUtils.defaultString(user.getRoleCode()).split(","))
+                .map(String::trim)
+                .anyMatch("admin"::equalsIgnoreCase);
     }
 }

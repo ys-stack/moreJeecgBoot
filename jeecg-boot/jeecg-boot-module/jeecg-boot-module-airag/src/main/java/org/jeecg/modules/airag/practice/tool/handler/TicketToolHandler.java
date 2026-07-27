@@ -15,7 +15,6 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
-import org.apache.shiro.SecurityUtils;
 import org.jeecg.common.system.vo.LoginUser;
 
 /**
@@ -59,16 +58,12 @@ public class TicketToolHandler extends AbstractToolHandler {
         ticket.setCreateTime(new Date());
 
         // 获取当前登录用户作为 requester 和 createBy
-        try {
-            LoginUser loginUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
-            String currentUser = loginUser != null ? loginUser.getUsername() : "ai_agent";
-            ticket.setRequester(currentUser);
-            ticket.setCreateBy(currentUser);
-        } catch (Exception e) {
-            // 如果没有登录上下文（比如测试场景），使用默认值
-            ticket.setRequester("ai_agent");
-            ticket.setCreateBy("ai_agent");
+        LoginUser loginUser = getCurrentUser();
+        if (loginUser == null) {
+            throw new IllegalStateException("缺少工具执行用户上下文");
         }
+        ticket.setRequester(loginUser.getUsername());
+        ticket.setCreateBy(loginUser.getId());
 
         log.info("[createTicket] 创建工单: title={}, type={}, priority={}",
                 title, ticket.getTicketType(), ticket.getPriority());

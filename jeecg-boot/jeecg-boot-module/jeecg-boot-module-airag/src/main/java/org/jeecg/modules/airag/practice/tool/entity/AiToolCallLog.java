@@ -40,6 +40,9 @@ public class AiToolCallLog implements Serializable {
     @Schema(description = "关联的消息ID")
     private String messageId;
 
+    @Schema(description = "服务端写操作确认单ID")
+    private String pendingCallId;
+
     @Excel(name = "工具编码", width = 20)
     @Schema(description = "工具编码")
     private String toolCode;

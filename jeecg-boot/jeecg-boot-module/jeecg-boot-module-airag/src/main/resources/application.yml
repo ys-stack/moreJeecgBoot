@@ -12,8 +12,8 @@ spring:
     druid:
       stat-view-servlet:
         enabled: true
-        loginUsername: admin
-        loginPassword: 123456
+        loginUsername: ${PRACTICE_DRUID_USERNAME:}
+        loginPassword: ${PRACTICE_DRUID_PASSWORD:}
         allow:
       web-stat-filter:
         enabled: true
@@ -52,15 +52,15 @@ spring:
       datasource:
         master:
           ## !!!!!MYSQL
-          url: jdbc:mysql://localhost:3307/jeecg-boot-dev?characterEncoding=UTF-8&useUnicode=true&useSSL=false&tinyInt1isBit=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
-          username: root
-          password: root
+          url: ${PRACTICE_DB_URL:jdbc:mysql://localhost:3307/jeecg-boot-dev?characterEncoding=UTF-8&useUnicode=true&useSSL=false&tinyInt1isBit=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai}
+          username: ${PRACTICE_DB_USERNAME:root}
+          password: ${PRACTICE_DB_PASSWORD:}
           driver-class-name: com.mysql.cj.jdbc.Driver
   redis:
     database: 0
     host: 127.0.0.1
     port: 6379
-    password: 'res983'
+    password: ${PRACTICE_REDIS_PASSWORD:}
 jeecg:
   ai-rag:
     embed-store:
@@ -68,5 +68,5 @@ jeecg:
       port: 15432
       database: "postgres"
       user: "postgres"
-      password: "123456"
+      password: ${PRACTICE_PGVECTOR_PASSWORD:}
       table: "embeddings"

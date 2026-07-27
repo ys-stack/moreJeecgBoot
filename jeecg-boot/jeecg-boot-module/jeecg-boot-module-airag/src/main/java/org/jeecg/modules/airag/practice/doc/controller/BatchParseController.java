@@ -3,9 +3,13 @@ package org.jeecg.modules.airag.practice.doc.controller;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.jeecg.common.api.vo.Result;
+import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.modules.airag.practice.doc.service.BatchParseService;
 import org.jeecg.modules.airag.practice.doc.vo.BatchParseResultVO;
+import org.jeecg.modules.airag.practice.security.KnowledgeAccessService;
+import org.jeecg.modules.airag.practice.security.PracticeSecurityContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -32,6 +36,13 @@ public class BatchParseController {
     @Autowired
     private BatchParseService batchParseService;
 
+    @Autowired
+    private PracticeSecurityContext securityContext;
+
+    @Autowired
+    private KnowledgeAccessService knowledgeAccessService;
+
+    @RequiresPermissions("practice:doc:upload")
     @PostMapping("/upload")
     @Operation(summary = "批量上传文件并解析入库")
     public Result<BatchParseResultVO> batchUpload(
@@ -41,6 +52,12 @@ public class BatchParseController {
         if (files == null || files.length == 0) {
             return Result.error("请选择要解析的文件");
         }
+        if (knowledgeBaseId == null || knowledgeBaseId.isBlank()) {
+            return Result.error("knowledgeBaseId 不能为空");
+        }
+
+        LoginUser user = securityContext.requireUser();
+        knowledgeAccessService.requireManageableKnowledgeBase(knowledgeBaseId, user);
 
         log.info("批量解析请求: 文件数={}, knowledgeBaseId={}", files.length, knowledgeBaseId);
 
@@ -56,7 +73,8 @@ public class BatchParseController {
                 );
             }
 
-            BatchParseResultVO result = batchParseService.batchUploadAndParse(uploads, knowledgeBaseId);
+            BatchParseResultVO result = batchParseService.batchUploadAndParse(
+                    uploads, knowledgeBaseId, user.getId());
             return Result.OK(result);
         } catch (IOException e) {
             log.error("读取上传文件失败", e);

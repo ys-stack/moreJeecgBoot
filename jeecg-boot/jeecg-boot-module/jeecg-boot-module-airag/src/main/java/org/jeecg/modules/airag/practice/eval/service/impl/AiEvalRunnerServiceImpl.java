@@ -10,17 +10,21 @@ import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.modules.airag.practice.chat.service.RagChatService;
 import org.jeecg.modules.airag.practice.chat.vo.RagChatRequest;
 import org.jeecg.modules.airag.practice.chat.vo.RagChatResponse;
-import org.jeecg.modules.airag.practice.doc.service.impl.BatchParseServiceImpl;
+import org.jeecg.modules.airag.practice.config.PracticeAiConfig;
 import org.jeecg.modules.airag.practice.eval.entity.AiEvalDataset;
 import org.jeecg.modules.airag.practice.eval.entity.AiEvalResult;
+import org.jeecg.modules.airag.practice.eval.entity.AiEvalRun;
+import org.jeecg.modules.airag.practice.eval.service.AiEvalScorer;
 import org.jeecg.modules.airag.practice.eval.service.IAiEvalDatasetService;
 import org.jeecg.modules.airag.practice.eval.service.IAiEvalResultService;
+import org.jeecg.modules.airag.practice.eval.service.IAiEvalRunService;
 import org.jeecg.modules.airag.practice.eval.service.IAiEvalRunnerService;
 import org.jeecg.modules.airag.practice.eval.vo.AiEvalReportVO;
 import org.jeecg.modules.airag.practice.eval.vo.AiEvalRunRequest;
 import org.jeecg.modules.airag.practice.eval.vo.AiEvalRunTask;
 import org.jeecg.modules.airag.practice.threadpool.PracticeThreadPool;
-import org.jeecg.modules.airag.practice.tool.controller.ToolChatController;
+import org.jeecg.modules.airag.practice.prompt.entity.AiPromptTemplate;
+import org.jeecg.modules.airag.practice.prompt.service.IAiPromptTemplateService;
 import org.jeecg.modules.airag.practice.tool.service.ToolChatService;
 import org.jeecg.modules.airag.practice.tool.vo.ToolChatResponse;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,9 +47,15 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
     @Resource
     private IAiEvalResultService resultService;
     @Resource
+    private IAiEvalRunService runService;
+    @Resource
     private RagChatService ragChatService;
     @Resource
     private ToolChatService toolChatService;
+    @Resource
+    private IAiPromptTemplateService promptTemplateService;
+    @Resource
+    private PracticeAiConfig practiceAiConfig;
     @Resource
     @Qualifier("practiceAsyncPool")
     private PracticeThreadPool asyncPool;
@@ -61,29 +71,46 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
      * @Desc: 一键执行评测：加载用例 -> 执行RAG/Agent -> 评分 -> 落库 -> 返回报告
      */
     @Override
-    public AiEvalReportVO run(AiEvalRunRequest request, String userId) {
+    public AiEvalReportVO run(AiEvalRunRequest request, LoginUser user) {
         if (request == null) {
             request = new AiEvalRunRequest();
         }
+        requireUser(user);
+        String systemPrompt = resolveExecutionConfig(request);
         String runId = UUID.randomUUID().toString().replace("-", "");
-        //按评测类型和用例编码筛选本次要跑的用例
         List<AiEvalDataset> cases = loadCases(request);
         if (ObjectUtils.isEmpty(cases)) {
             throw new RuntimeException("测试用例不能为空!");
         }
-        for (AiEvalDataset item : cases) {
-            AiEvalResult result;
-            try {
-                result = "agent".equals(item.getEvalType())
-                        ? runAgentCase(runId, request, item, userId)
-                        : runRagCase(runId, request, item, userId);
-            } catch (Exception e) {
-                log.error("评测用例执行失败: {}", item.getCaseCode(), e);
-                result = buildErrorResult(runId, request, item, userId, e);
+
+        // 先持久化运行快照。即使进程中途退出，也能看到任务停在哪条用例，而不是只剩零散结果。
+        AiEvalRun run = createRun(runId, request, cases, user.getId(), AiEvalRun.STATUS_RUNNING);
+        runService.save(run);
+        int passedCount = 0;
+        try {
+            for (AiEvalDataset item : cases) {
+                updateRunProgress(run, item.getCaseCode(), run.getProcessedCases(), passedCount);
+                AiEvalResult result;
+                try {
+                    result = "agent".equals(item.getEvalType())
+                            ? runAgentCase(runId, request, item, user, systemPrompt)
+                            : runRagCase(runId, request, item, user, systemPrompt);
+                } catch (Exception e) {
+                    log.error("评测用例执行失败: {}", item.getCaseCode(), e);
+                    result = buildErrorResult(runId, request, item, user.getId(), e);
+                }
+                resultService.save(result);
+                run.setProcessedCases(run.getProcessedCases() + 1);
+                if (Objects.equals(result.getPassed(), 1)) {
+                    passedCount++;
+                }
             }
-            resultService.save(result);
+            completeRun(run, passedCount);
+            return report(runId);
+        } catch (Exception e) {
+            failRun(run, e);
+            throw e;
         }
-        return report(runId);
     }
 
     /*
@@ -118,31 +145,25 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
      * @Date: 2026/7/5 星期日 22:18
      * @Desc: 执行单条Agent评测用例，并计算工具选择、参数准确、任务完成
      */
-    private AiEvalResult runAgentCase(String runId, AiEvalRunRequest request, AiEvalDataset aiEvalDataset, String userId) {
+    private AiEvalResult runAgentCase(String runId,
+                                      AiEvalRunRequest request,
+                                      AiEvalDataset aiEvalDataset,
+                                      LoginUser user,
+                                      String systemPrompt) {
         long start = System.currentTimeMillis();
 
-        ToolChatController.ToolChatRequest chatReq = new ToolChatController.ToolChatRequest();
-        chatReq.setMessage(aiEvalDataset.getQuestion());
-        chatReq.setConfirmTools(StringUtils.isNotBlank(aiEvalDataset.getExpectedToolName())
-                ? List.of(aiEvalDataset.getExpectedToolName())
-                : Collections.emptyList());
-
-        String evalUserId = StringUtils.defaultIfBlank(userId, "admin");
-        LoginUser evalUser = new LoginUser();
-        evalUser.setId(evalUserId);
-        evalUser.setUsername(evalUserId);
-        evalUser.setRealname("admin".equalsIgnoreCase(evalUserId) ? "管理员" : evalUserId);
-        evalUser.setRoleCode("admin");
-
-        ToolChatResponse resp = toolChatService.chatWithTools(chatReq, evalUser);
+        // 只让模型输出工具计划，不执行 Handler。这样既能评工具和参数，也不会真的创建工单。
+        ToolChatResponse resp = toolChatService.evaluateToolPlan(aiEvalDataset.getQuestion(), user, systemPrompt);
         long cost = System.currentTimeMillis() - start;
 
-        BigDecimal toolSelection = scoreTool(resp.getToolCalls(), aiEvalDataset.getExpectedToolName());
-        BigDecimal paramAccuracy = scoreParams(resp.getToolCalls(), aiEvalDataset.getExpectedToolName(), aiEvalDataset.getExpectedToolParams());
-        BigDecimal taskCompletion = scoreTask(resp, aiEvalDataset.getExpectedTaskResult());
-        BigDecimal total = toolSelection.multiply(new BigDecimal("0.4"))
-                .add(paramAccuracy.multiply(new BigDecimal("0.3")))
-                .add(taskCompletion.multiply(new BigDecimal("0.3")))
+        BigDecimal toolSelection = AiEvalScorer.scoreTool(resp.getToolCalls(), aiEvalDataset.getExpectedToolName());
+        BigDecimal paramAccuracy = AiEvalScorer.scoreParams(resp.getToolCalls(), aiEvalDataset.getExpectedToolName(), aiEvalDataset.getExpectedToolParams());
+        BigDecimal confirmation = AiEvalScorer.scoreConfirmation(resp, aiEvalDataset.getShouldRequireConfirm());
+        BigDecimal taskCompletion = AiEvalScorer.scoreTask(resp, aiEvalDataset.getExpectedTaskResult());
+        BigDecimal total = toolSelection.multiply(new BigDecimal("0.35"))
+                .add(paramAccuracy.multiply(new BigDecimal("0.30")))
+                .add(confirmation.multiply(new BigDecimal("0.25")))
+                .add(taskCompletion.multiply(new BigDecimal("0.10")))
                 .setScale(2, RoundingMode.HALF_UP);
         boolean passed = total.compareTo(new BigDecimal("70")) >= 0;
 
@@ -150,21 +171,27 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
         judgeDetail.put("toolSelection", toolSelection);
         judgeDetail.put("paramAccuracy", paramAccuracy);
         judgeDetail.put("taskCompletion", taskCompletion);
+        judgeDetail.put("confirmation", confirmation);
         judgeDetail.put("expectedToolName", aiEvalDataset.getExpectedToolName());
         judgeDetail.put("expectedToolParams", aiEvalDataset.getExpectedToolParams());
         judgeDetail.put("expectedTaskResult", aiEvalDataset.getExpectedTaskResult());
 
-        return baseResult(runId, request, aiEvalDataset, userId)
+        return baseResult(runId, request, aiEvalDataset, user.getId())
                 .setActualAnswer(resp.getContent())
                 .setActualToolCalls(JSON.toJSONString(resp.getToolCalls()))
                 .setRawResponse(JSON.toJSONString(resp))
                 .setToolSelectionScore(toolSelection)
                 .setParamAccuracyScore(paramAccuracy)
                 .setTaskCompletionScore(taskCompletion)
+                .setConfirmationScore(confirmation)
                 .setTotalScore(total)
                 .setPassed(passed ? 1 : 0)
                 .setDurationMs(cost)
-                .setModelName(StringUtils.defaultIfBlank(request.getModelName(), resp.getModel()))
+                .setPromptTokens(resp.getPromptTokens())
+                .setCompletionTokens(resp.getCompletionTokens())
+                .setTotalTokens(sum(resp.getPromptTokens(), resp.getCompletionTokens()))
+                // 记录模型实际返回值，不能用请求参数伪装成已切换模型。
+                .setModelName(resp.getModel())
                 .setStatus(passed ? "success" : "fail")
                 .setJudgeDetail(JSON.toJSONString(judgeDetail))
                 .setCreateTime(new Date());
@@ -175,42 +202,49 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
      * @Date: 2026/7/5 星期日 22:18
      * @Desc: 执行单条RAG评测用例，并计算回答相关性、引用命中率、拒答率
      */
-    private AiEvalResult runRagCase(String runId, AiEvalRunRequest request, AiEvalDataset aiEvalDataset, String userId) {
+    private AiEvalResult runRagCase(String runId,
+                                    AiEvalRunRequest request,
+                                    AiEvalDataset aiEvalDataset,
+                                    LoginUser user,
+                                    String systemPrompt) {
         long start = System.currentTimeMillis();
         RagChatRequest chatReq = new RagChatRequest();
         chatReq.setQuery(aiEvalDataset.getQuestion());
         chatReq.setKnowledgeBaseId(aiEvalDataset.getKnowledgeBaseId());
         chatReq.setTopK(5);
 
-        String evalUserId = StringUtils.defaultIfBlank(userId, "admin");
-        RagChatResponse resp = ragChatService.ragChat(chatReq, evalUserId);
+        RagChatResponse resp = ragChatService.ragChat(chatReq, user, systemPrompt);
         long cost = System.currentTimeMillis() - start;
 
-        BigDecimal relevance = scoreKeywords(resp.getAnswer(), aiEvalDataset.getExpectedKeywords());
-        BigDecimal refHit = scoreReferences(resp.getReferences(), aiEvalDataset.getExpectedReferences());
-        BigDecimal reject = scoreReject(resp.getAnswer(), aiEvalDataset.getExpectedReject());
+        BigDecimal relevance = AiEvalScorer.scoreKeywords(resp.getAnswer(), aiEvalDataset.getExpectedKeywords());
+        BigDecimal refHit = AiEvalScorer.scoreReferences(resp.getReferences(), aiEvalDataset.getExpectedReferences());
+        BigDecimal chunkHit = AiEvalScorer.scoreKeywords(JSON.toJSONString(resp.getReferences()), aiEvalDataset.getExpectedChunkKeywords());
+        BigDecimal reject = AiEvalScorer.scoreReject(resp.getAnswer(), aiEvalDataset.getExpectedReject());
         BigDecimal total = aiEvalDataset.getExpectedReject() != null && aiEvalDataset.getExpectedReject() == 1
                 ? reject
-                : relevance.multiply(new BigDecimal("0.5"))
+                : relevance.multiply(new BigDecimal("0.4"))
                 .add(refHit.multiply(new BigDecimal("0.3")))
-                .add(reject.multiply(new BigDecimal("0.2")));
+                .add(chunkHit.multiply(new BigDecimal("0.2")))
+                .add(reject.multiply(new BigDecimal("0.1")));
         total = total.setScale(2, RoundingMode.HALF_UP);
         boolean passed = total.compareTo(new BigDecimal("70")) >= 0;
 
         Map<String, Object> judgeDetail = new LinkedHashMap<>();
         judgeDetail.put("answerRelevance", relevance);
         judgeDetail.put("referenceHit", refHit);
+        judgeDetail.put("chunkHit", chunkHit);
         judgeDetail.put("reject", reject);
         judgeDetail.put("expectedKeywords", aiEvalDataset.getExpectedKeywords());
         judgeDetail.put("expectedReferences", aiEvalDataset.getExpectedReferences());
         judgeDetail.put("expectedReject", aiEvalDataset.getExpectedReject());
 
-        return baseResult(runId, request, aiEvalDataset, userId)
+        return baseResult(runId, request, aiEvalDataset, user.getId())
                 .setActualAnswer(resp.getAnswer())
                 .setActualReferences(JSON.toJSONString(resp.getReferences()))
                 .setRawResponse(JSON.toJSONString(resp))
                 .setAnswerRelevanceScore(relevance)
                 .setReferenceHitScore(refHit)
+                .setChunkHitScore(chunkHit)
                 .setRejectScore(reject)
                 .setTotalScore(total)
                 .setPassed(passed ? 1 : 0)
@@ -218,7 +252,7 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
                 .setPromptTokens(resp.getPromptTokens())
                 .setCompletionTokens(resp.getCompletionTokens())
                 .setTotalTokens(sum(resp.getPromptTokens(), resp.getCompletionTokens()))
-                .setModelName(StringUtils.defaultIfBlank(request.getModelName(), resp.getModel()))
+                .setModelName(resp.getModel())
                 .setStatus(passed ? "success" : "fail")
                 .setJudgeDetail(JSON.toJSONString(judgeDetail))
                 .setCreateTime(new Date());
@@ -242,6 +276,7 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
                 .setModelProvider(request.getModelProvider())
                 .setModelName(request.getModelName())
                 .setQuestion(aiEvalDataset.getQuestion())
+                .setCaseWeight(aiEvalDataset.getWeight() == null ? BigDecimal.ONE : aiEvalDataset.getWeight())
                 .setCreateBy(userId)
                 .setCreateTime(new Date());
     }
@@ -384,22 +419,27 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
                 .filter(item -> item.getPassed() != null && item.getPassed() == 1)
                 .count();
 
-        Map<String, BigDecimal> caseWeightMap = datasetService.list().stream()
-                .collect(Collectors.toMap(AiEvalDataset::getId, item -> item.getWeight() != null ? item.getWeight() : BigDecimal.ONE, (k1, k2) -> k1));
-
         return AiEvalReportVO.builder()
                 .runId(runId)
                 .runName(results.get(0).getRunName())
                 .totalCases(totalCases)
                 .passedCases(passedCases)
                 .passRate(BigDecimal.valueOf(passedCases * 100.0 / totalCases).setScale(2, RoundingMode.HALF_UP))
-                .avgScore(calculateWeightedAvg(results, AiEvalResult::getTotalScore, caseWeightMap))
-                .ragAnswerRelevance(calculateWeightedAvg(results, AiEvalResult::getAnswerRelevanceScore, caseWeightMap))
-                .ragReferenceHit(calculateWeightedAvg(results, AiEvalResult::getReferenceHitScore, caseWeightMap))
-                .ragReject(calculateWeightedAvg(results, AiEvalResult::getRejectScore, caseWeightMap))
-                .agentToolSelection(calculateWeightedAvg(results, AiEvalResult::getToolSelectionScore, caseWeightMap))
-                .agentParamAccuracy(calculateWeightedAvg(results, AiEvalResult::getParamAccuracyScore, caseWeightMap))
-                .agentTaskCompletion(calculateWeightedAvg(results, AiEvalResult::getTaskCompletionScore, caseWeightMap))
+                // 权重来自结果快照，修改或删除黄金用例不会改变历史报告。
+                .avgScore(calculateWeightedAvg(results, AiEvalResult::getTotalScore))
+                .ragAnswerRelevance(calculateWeightedAvg(results, AiEvalResult::getAnswerRelevanceScore))
+                .ragReferenceHit(calculateWeightedAvg(results, AiEvalResult::getReferenceHitScore))
+                .ragChunkHit(calculateWeightedAvg(results, AiEvalResult::getChunkHitScore))
+                .ragReject(calculateWeightedAvg(results, AiEvalResult::getRejectScore))
+                .agentToolSelection(calculateWeightedAvg(results, AiEvalResult::getToolSelectionScore))
+                .agentParamAccuracy(calculateWeightedAvg(results, AiEvalResult::getParamAccuracyScore))
+                .agentTaskCompletion(calculateWeightedAvg(results, AiEvalResult::getTaskCompletionScore))
+                .agentConfirmation(calculateWeightedAvg(results, AiEvalResult::getConfirmationScore))
+                .avgDurationMs(calculateAverageDuration(results))
+                .p95DurationMs(calculateP95Duration(results))
+                .totalPromptTokens(sumTokens(results, AiEvalResult::getPromptTokens))
+                .totalCompletionTokens(sumTokens(results, AiEvalResult::getCompletionTokens))
+                .totalTokens(sumTokens(results, AiEvalResult::getTotalTokens))
                 .results(results)
                 .build();
     }
@@ -408,8 +448,7 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
      * 通用加权平均分计算函数
      */
     private BigDecimal calculateWeightedAvg(List<AiEvalResult> results,
-                                           Function<AiEvalResult, BigDecimal> scoreGetter,
-                                           Map<String, BigDecimal> caseWeightMap) {
+                                           Function<AiEvalResult, BigDecimal> scoreGetter) {
         if (ObjectUtils.isEmpty(results)) {
             return BigDecimal.ZERO;
         }
@@ -420,7 +459,7 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
             BigDecimal score = scoreGetter.apply(result);
             if (score == null) continue;
 
-            BigDecimal weight = caseWeightMap.getOrDefault(result.getDatasetId(), BigDecimal.ONE);
+            BigDecimal weight = result.getCaseWeight() == null ? BigDecimal.ONE : result.getCaseWeight();
             totalWeightedScore = totalWeightedScore.add(score.multiply(weight));
             totalWeight = totalWeight.add(weight);
         }
@@ -432,31 +471,69 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
         return totalWeightedScore.divide(totalWeight, 2, RoundingMode.HALF_UP);
     }
 
+    /** 平均耗时只统计真正调用完成并记录了耗时的用例。 */
+    private BigDecimal calculateAverageDuration(List<AiEvalResult> results) {
+        LongSummaryStatistics statistics = results.stream()
+                .map(AiEvalResult::getDurationMs)
+                .filter(Objects::nonNull)
+                .mapToLong(Long::longValue)
+                .summaryStatistics();
+        if (statistics.getCount() == 0) {
+            return BigDecimal.ZERO;
+        }
+        return BigDecimal.valueOf(statistics.getAverage()).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /** 使用 nearest-rank 算法计算 P95，少量样本时也能稳定得到一个真实观测值。 */
+    private Long calculateP95Duration(List<AiEvalResult> results) {
+        List<Long> durations = results.stream()
+                .map(AiEvalResult::getDurationMs)
+                .filter(Objects::nonNull)
+                .sorted()
+                .toList();
+        if (durations.isEmpty()) {
+            return 0L;
+        }
+        int index = Math.max(0, (int) Math.ceil(durations.size() * 0.95) - 1);
+        return durations.get(index);
+    }
+
+    private Long sumTokens(List<AiEvalResult> results, Function<AiEvalResult, Integer> getter) {
+        return results.stream().map(getter).filter(Objects::nonNull).mapToLong(Integer::longValue).sum();
+    }
+
     /*
      * @Author: ys
      * @Date: 2026/7/23 星期四 22:10
      * @Desc: 提交异步任务
      */
     @Override
-    public AiEvalRunTask submitRunAsync(AiEvalRunRequest request, String userId) {
+    public AiEvalRunTask submitRunAsync(AiEvalRunRequest request, LoginUser user) {
         if (request == null) request = new AiEvalRunRequest();
+        requireUser(user);
+        String systemPrompt = resolveExecutionConfig(request);
         String runId = UUID.randomUUID().toString().replace("-", "");
         String runName = StringUtils.defaultIfBlank(request.getRunName(), "AI评测-" + runId.substring(0, 8));
 
         List<AiEvalDataset> cases = loadCases(request);
+        if (ObjectUtils.isEmpty(cases)) {
+            throw new IllegalArgumentException("没有符合条件的启用评测用例");
+        }
+        AiEvalRun run = createRun(runId, request, cases, user.getId(), AiEvalRun.STATUS_PENDING);
+        runService.save(run);
         AiEvalRunTask task = new AiEvalRunTask()
                 .setRunId(runId)
                 .setRunName(runName)
-                .setStatus("RUNNING")
+                .setStatus(AiEvalRun.STATUS_PENDING)
                 .setTotalCases(cases.size())
                 .setProcessedCases(0)
                 .setPassedCases(0)
                 .setStartTime(new Date());
 
         redisTemplate.opsForValue().set(CACHE_EVAL_RUNNER_PREFIX + runId, task, 24, TimeUnit.HOURS);
-        // 异步提交到线程池中运行，避免 HTTP 主线程阻塞超时
+        // Redis只负责高频进度读取，MySQL中的ai_eval_run才是任务状态事实来源。
         final AiEvalRunRequest reqCopy = request;
-        asyncPool.submit(() -> executeTaskAsync(runId, reqCopy, cases, userId));
+        asyncPool.submit(() -> executeTaskAsync(runId, reqCopy, cases, user, systemPrompt));
         return task;
     }
 
@@ -465,31 +542,41 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
      * @Date: 2026/7/23 星期四 22:42
      * @Desc: 异步执行任务逻辑
      */
-    private void executeTaskAsync(String runId, AiEvalRunRequest request, List<AiEvalDataset> cases, String userId) {
+    private void executeTaskAsync(String runId,
+                                  AiEvalRunRequest request,
+                                  List<AiEvalDataset> cases,
+                                  LoginUser user,
+                                  String systemPrompt) {
         AiEvalRunTask task = (AiEvalRunTask) redisTemplate.opsForValue().get(CACHE_EVAL_RUNNER_PREFIX + runId);
         if (task == null) {
             task = new AiEvalRunTask()
                     .setRunId(runId)
-                    .setStatus("RUNNING")
+                    .setStatus(AiEvalRun.STATUS_RUNNING)
                     .setTotalCases(cases.size())
                     .setProcessedCases(0)
                     .setPassedCases(0)
                     .setStartTime(new Date());
         }
+        task.setStatus(AiEvalRun.STATUS_RUNNING);
+        AiEvalRun run = runService.getById(runId);
+        run.setStatus(AiEvalRun.STATUS_RUNNING).setUpdateTime(new Date());
+        runService.updateById(run);
+        redisTemplate.opsForValue().set(CACHE_EVAL_RUNNER_PREFIX + runId, task, 24, TimeUnit.HOURS);
         int passedCount = 0;
 
         try {
             for (AiEvalDataset item : cases) {
                 // 更新当前正在处理的用例编码，方便前端展示“正在评测 RAG_005...”
                 task.setCurrentCaseCode(item.getCaseCode());
+                updateRunProgress(run, item.getCaseCode(), task.getProcessedCases(), passedCount);
                 AiEvalResult result;
                 try {
                     result = "agent".equals(item.getEvalType())
-                            ? runAgentCase(runId, request, item, userId)
-                            : runRagCase(runId, request, item, userId);
+                            ? runAgentCase(runId, request, item, user, systemPrompt)
+                            : runRagCase(runId, request, item, user, systemPrompt);
                 } catch (Exception e) {
                     log.error("评测用例异步执行失败: {}", item.getCaseCode(), e);
-                    result = buildErrorResult(runId, request, item, userId, e);
+                    result = buildErrorResult(runId, request, item, user.getId(), e);
                 }
                 resultService.save(result);
                 if (result.getPassed() != null && result.getPassed() == 1) {
@@ -500,13 +587,15 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
                 task.setPassedCases(passedCount);
                 redisTemplate.opsForValue().set(CACHE_EVAL_RUNNER_PREFIX + runId, task, 24, TimeUnit.HOURS);
             }
-            task.setStatus("COMPLETED")
+            completeRun(run, passedCount);
+            task.setStatus(AiEvalRun.STATUS_COMPLETED)
                     .setCurrentCaseCode("DONE")
                     .setEndTime(new Date());
             redisTemplate.opsForValue().set(CACHE_EVAL_RUNNER_PREFIX + runId, task, 24, TimeUnit.HOURS);
         } catch (Exception e) {
             log.error("评测任务运行致命异常, runId={}", runId, e);
-            task.setStatus("FAILED")
+            failRun(run, e);
+            task.setStatus(AiEvalRun.STATUS_FAILED)
                     .setErrorMsg(e.getMessage())
                     .setEndTime(new Date());
             redisTemplate.opsForValue().set(CACHE_EVAL_RUNNER_PREFIX + runId, task, 24, TimeUnit.HOURS);
@@ -520,7 +609,13 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
      */
     @Override
     public AiEvalRunTask getTaskStatus(String runId) {
-        return (AiEvalRunTask) redisTemplate.opsForValue().get(CACHE_EVAL_RUNNER_PREFIX+runId);
+        AiEvalRunTask cached = (AiEvalRunTask) redisTemplate.opsForValue().get(CACHE_EVAL_RUNNER_PREFIX + runId);
+        if (cached != null) {
+            return cached;
+        }
+        // Redis过期或重启后从MySQL恢复可查询状态，避免前端拿到null后无限报错轮询。
+        AiEvalRun run = runService.getById(runId);
+        return run == null ? null : toTask(run);
     }
 
     @Override
@@ -545,11 +640,120 @@ public class AiEvalRunnerServiceImpl implements IAiEvalRunnerService {
         deltas.put("avgScoreDelta", subtract(target.getAvgScore(), base.getAvgScore()));
         deltas.put("ragAnswerRelevanceDelta", subtract(target.getRagAnswerRelevance(), base.getRagAnswerRelevance()));
         deltas.put("ragReferenceHitDelta", subtract(target.getRagReferenceHit(), base.getRagReferenceHit()));
+        deltas.put("ragChunkHitDelta", subtract(target.getRagChunkHit(), base.getRagChunkHit()));
         deltas.put("ragRejectDelta", subtract(target.getRagReject(), base.getRagReject()));
         deltas.put("agentToolSelectionDelta", subtract(target.getAgentToolSelection(), base.getAgentToolSelection()));
         deltas.put("agentParamAccuracyDelta", subtract(target.getAgentParamAccuracy(), base.getAgentParamAccuracy()));
         deltas.put("agentTaskCompletionDelta", subtract(target.getAgentTaskCompletion(), base.getAgentTaskCompletion()));
+        deltas.put("agentConfirmationDelta", subtract(target.getAgentConfirmation(), base.getAgentConfirmation()));
+        deltas.put("avgDurationMsDelta", subtract(target.getAvgDurationMs(), base.getAvgDurationMs()));
         return deltas;
+    }
+
+    /**
+     * 将页面选择解析成真正会执行的配置。
+     * 当前模型客户端是启动时创建的单例，因此不允许把任意modelName只写进报告却不切模型。
+     */
+    private String resolveExecutionConfig(AiEvalRunRequest request) {
+        String configuredModel = practiceAiConfig.getModelName();
+        if (StringUtils.isBlank(request.getModelName())) {
+            request.setModelName(configuredModel);
+        } else if (!StringUtils.equals(request.getModelName(), configuredModel)) {
+            throw new IllegalArgumentException("当前实例只配置了模型 " + configuredModel
+                    + "，不能假装切换为 " + request.getModelName() + "；请修改practice.ai配置并重启后再评测");
+        }
+
+        if (StringUtils.isBlank(request.getPromptCode())) {
+            if (request.getPromptVersion() != null) {
+                throw new IllegalArgumentException("指定promptVersion时必须同时指定promptCode");
+            }
+            return null;
+        }
+
+        AiPromptTemplate template = request.getPromptVersion() == null
+                ? promptTemplateService.getActiveByCode(request.getPromptCode())
+                : promptTemplateService.getByCodeAndVersion(request.getPromptCode(), request.getPromptVersion());
+        if (template == null) {
+            throw new IllegalArgumentException("未找到Prompt模板: " + request.getPromptCode()
+                    + (request.getPromptVersion() == null ? "" : " v" + request.getPromptVersion()));
+        }
+        request.setPromptVersion(template.getVersion());
+        return template.getTemplate();
+    }
+
+    private AiEvalRun createRun(String runId,
+                                AiEvalRunRequest request,
+                                List<AiEvalDataset> cases,
+                                String userId,
+                                String status) {
+        Date now = new Date();
+        return new AiEvalRun()
+                .setId(runId)
+                .setRunName(StringUtils.defaultIfBlank(request.getRunName(), "AI评测-" + runId.substring(0, 8)))
+                .setStatus(status)
+                .setEvalType(request.getEvalType())
+                .setPromptCode(request.getPromptCode())
+                .setPromptVersion(request.getPromptVersion())
+                .setModelProvider(request.getModelProvider())
+                .setModelName(request.getModelName())
+                .setRequestJson(JSON.toJSONString(request))
+                // 快照包含问题、标准答案和权重，可用于审计当时到底跑了什么。
+                .setCaseSnapshot(JSON.toJSONString(cases))
+                .setTotalCases(cases.size())
+                .setProcessedCases(0)
+                .setPassedCases(0)
+                .setStartTime(now)
+                .setCreateBy(userId)
+                .setCreateTime(now)
+                .setUpdateTime(now);
+    }
+
+    private void updateRunProgress(AiEvalRun run, String caseCode, int processedCases, int passedCases) {
+        run.setStatus(AiEvalRun.STATUS_RUNNING)
+                .setCurrentCaseCode(caseCode)
+                .setProcessedCases(processedCases)
+                .setPassedCases(passedCases)
+                .setUpdateTime(new Date());
+        runService.updateById(run);
+    }
+
+    private void completeRun(AiEvalRun run, int passedCases) {
+        Date now = new Date();
+        run.setStatus(AiEvalRun.STATUS_COMPLETED)
+                .setCurrentCaseCode("DONE")
+                .setPassedCases(passedCases)
+                .setEndTime(now)
+                .setUpdateTime(now);
+        runService.updateById(run);
+    }
+
+    private void failRun(AiEvalRun run, Exception e) {
+        Date now = new Date();
+        run.setStatus(AiEvalRun.STATUS_FAILED)
+                .setErrorMsg(StringUtils.left(e.getMessage(), 1000))
+                .setEndTime(now)
+                .setUpdateTime(now);
+        runService.updateById(run);
+    }
+
+    private AiEvalRunTask toTask(AiEvalRun run) {
+        return new AiEvalRunTask()
+                .setRunId(run.getId())
+                .setRunName(run.getRunName())
+                .setStatus(run.getStatus())
+                .setTotalCases(run.getTotalCases())
+                .setProcessedCases(run.getProcessedCases())
+                .setPassedCases(run.getPassedCases())
+                .setCurrentCaseCode(run.getCurrentCaseCode())
+                .setErrorMsg(run.getErrorMsg())
+                .setStartTime(run.getStartTime())
+                .setEndTime(run.getEndTime());
+    }
+
+    private void requireUser(LoginUser user) {
+        if (user == null || StringUtils.isBlank(user.getId())) {
+            throw new IllegalStateException("用户未登录，不能执行评测");
+        }
     }
 
     /**
